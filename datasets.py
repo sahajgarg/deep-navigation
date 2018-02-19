@@ -15,7 +15,7 @@ class KITTIDataset(Dataset):
     def __init__(self, frame_selections_file, images_dir, poses_dir):
         """
         Args:
-			frame_selections_file (string): Path to the csv file with rows: (
+			 frame_selections_file (string): Path to the csv file with rows: (
 				sequence# (00-21), camera# (image_2 or image_3), start frame# (00000-max_frame-length), length)
 			images_dir (string): Directory with all the images
 			poses_dir (string): Directory with all the camera poses
@@ -34,6 +34,8 @@ class KITTIDataset(Dataset):
     	# Load in all images in sequence 
     	# Set poses as the corresponding list from the poses_dir 
     	# Return sample
+
+        
 
     	"""
         img_name = os.path.join(self.root_dir,
