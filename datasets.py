@@ -22,7 +22,7 @@ class KITTIDataset(Dataset):
             transform (callable, optional): Optional transform to be applied
                 on a sample.
         """
-        self.frame_selections = pd.read_csv(frame_selections_file)
+        self.frame_selections = pd.read_csv(frame_selections_file, header=None)
         self.images_dir = images_dir
         self.poses_dir = poses_dir
 
@@ -31,11 +31,29 @@ class KITTIDataset(Dataset):
 
     def __getitem__(self, idx):
     	# Construct image path (except for frame)
-    	# Load in all images in sequence 
-    	# Set poses as the corresponding list from the poses_dir 
-    	# Return sample
+        image_dir = self.images_dir + "{:02d}/{:s}/".format(frame_selections[0][idx], frame_selections[1][idx])
+        images = []
 
-        
+    	# Load in all images in sequence 
+        for i in range(frame_selections[2][idx], frame_selections[2][idx] + frame_selections[3][idx] + 1):
+            images.append(io.imread(image_dir + "{:06d}.png".format(i)))
+
+    	# Set poses as the corresponding list from the poses_dir 
+        poses = []
+        with open(self.poses_dir + "{:02d}.txt".format(frame_selections[0][idx])) as poses_file:
+            for i, l in enumerate(poses_file):
+                if i < frame_selections[2][idx]:
+                    continue
+                if i >= frame_selections[2][idx] + frame_selections[3][idx]:
+                    break
+                pose = [float(i) for i in l.split()]
+                poses.append(pose)
+
+    	# Return sample
+        sample = {'images': np.array(images), 'poses': np.array(poses)}
+        return sample
+
+
 
     	"""
         img_name = os.path.join(self.root_dir,
@@ -47,4 +65,3 @@ class KITTIDataset(Dataset):
 
         return sample
         """
-        pass

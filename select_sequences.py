@@ -27,5 +27,5 @@ with open("sequences.csv", "a") as sequences:
 		camera = int(random() * 2) + 2
 
 		# Append line to file: "{:2d},{},{:5d},{}".format(seq,camera,start_frame,LEN_OF_SEQ)
-		sequences.write("{:02d},image_{:1d},{:05d},{}\n".format(SEQUENCE_NUMBERS[seq],camera,start_frame,LEN_OF_SEQ))
+		sequences.write("{:02d},image_{:1d},{:06d},{}\n".format(SEQUENCE_NUMBERS[seq],camera,start_frame,LEN_OF_SEQ))
 
