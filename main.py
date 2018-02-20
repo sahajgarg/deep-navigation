@@ -64,10 +64,13 @@ def train(epoch):
     for batch_idx, sampled_batch in enumerate(train_loader):
     	image_data = sampled_batch['images']
     	gt_poses = sampled_batch['gt_poses']
+        print(image_data)
+        print(gt_poses)
 
         if args.cuda:
             image_data, gt_poses = image_data.cuda(), gt_poses.cuda()
 
+        """
         image_data, gt_poses = Variable(image_data), Variable(gt_poses)
         optimizer.zero_grad()
         output = model(iamge_data)
@@ -76,6 +79,7 @@ def train(epoch):
         loss = F.nll_loss(output, gt_poses)
         loss.backward()
         optimizer.step()
+        """
 
 
         if batch_idx % args.log_interval == 0:

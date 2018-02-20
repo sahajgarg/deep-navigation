@@ -50,7 +50,7 @@ class KITTIDataset(Dataset):
                 poses.append(pose)
 
     	# Return sample
-        sample = {'images': np.array(images), 'poses': np.array(poses)}
+        sample = {'images': np.array(images), 'gt_poses': np.array(poses)}
         return sample
 
 
