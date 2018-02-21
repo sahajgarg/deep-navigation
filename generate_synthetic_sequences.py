@@ -64,11 +64,12 @@ def init_image():
   cv2.line(img, (0, WINDOW_SIZE/2), (WINDOW_SIZE-1, WINDOW_SIZE/2), (0,0,0))
   return img
 
-def draw_sols_onto_image(sols, cols, rads, path):
+def draw_sols_onto_image(sols, cols, rads, path, draw=False):
   img = init_image()
   for i in range(len(sols)): 
     draw_sol_onto_image(sols[i], cols[i], img, path, rads[i])
-  cv2.imwrite(path, img)
+  if draw: cv2.imwrite(path, img)
+  return img
 
 def run_disk(runtime_config, red_disk=False):
   p0, r, c= init_disk()
@@ -86,7 +87,7 @@ def run_disk(runtime_config, red_disk=False):
     #draw_sols_onto_image([sol],[(0,0,255)], "./imgs/" + str(t) + ".png")
   return (sols, r, c)
 
-def run_and_save_disks(runtime_config):
+def run_and_save_disks(runtime_config, number):
   n = runtime_config.n
   sol_sets = [run_disk(runtime_config) for i in range(n)]
   red_set = run_disk(runtime_config, red_disk=True)
@@ -99,12 +100,16 @@ def run_and_save_disks(runtime_config):
   for t in range(runtime_config.steps):
     sols_t = [elem[0][t] for elem in sol_sets]
     time_sols.append(sols_t)
+  imgs = []
   for t in range(runtime_config.steps): 
-    draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + str(t) + ".png")
+    img = draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + str(t) + ".png", draw=False)
+    imgs.append(img)
 
+  imgs_full = np.stack(imgs, axis=0)
+  np.save(number + "_img.npy", imgs_full)
   ##write out trajectory
   red_output = np.hstack(red_set[0])
-  np.save("red.npy", red_output)
+  np.save(number + "_pos.npy", red_output)
 
 SPRING_CONSTANT = -0.1
 DRAG_CONSTANT = -1.0
@@ -114,6 +119,7 @@ MU = 0.0
 SIG2 = 200.0
 N = 10
 STEPS = 100
+NT = 100
 class RConfig:
   def __init__(self, args):
     self.spring = SPRING_CONSTANT
@@ -144,6 +150,6 @@ def main():
     os.makedirs("imgs")
   else:
     for files in os.listdir("imgs"): os.remove("imgs/" + files)
-  run_and_save_disks(runtime_config)
+  for i in range(NT): run_and_save_disks(runtime_config, str(i))
 
 if __name__ == "__main__": main()
