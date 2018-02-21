@@ -7,8 +7,6 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 
-
-## See if I need to define collating -- I don't think I should need to 
 class KITTIDataset(Dataset):
     """KITTI dataset."""
 
@@ -28,11 +26,11 @@ class KITTIDataset(Dataset):
         print("initialized")
 
     def __len__(self):
-        print(len(self.frame_selections[0]))
+        #print(len(self.frame_selections[0]))
         return len(self.frame_selections[0])
 
     def __getitem__(self, idx):
-        print("getting item")
+        #print("getting item")
     	# Construct image path (except for frame)
         image_dir = self.images_dir + "{:02d}/{:s}/".format(self.frame_selections[0][idx], self.frame_selections[1][idx])
         images = []
@@ -53,19 +51,30 @@ class KITTIDataset(Dataset):
                 poses.append(pose)
 
     	# Return sample
-        sample = {'images': np.array(images), 'gt_poses': np.array(poses)}
-        print(sample['images'].shape, sample['gt_poses'].shape)
+        sample = {'images': np.array(images), 'gt': np.array(poses)}
+        print(sample['images'].shape, sample['gt'].shape)
         return sample
 
+class RedDotDataset(Dataset):
+    """RedDot dataset."""
 
-
+    def __init__(self, base_dir):
         """
-        img_name = os.path.join(self.root_dir,
-                                self.landmarks_frame.iloc[idx, 0])
-        image = io.imread(img_name)
-        landmarks = self.landmarks_frame.iloc[idx, 1:].as_matrix()
-        landmarks = landmarks.astype('float').reshape(-1, 2)
-        sample = {'image': image, 'laindmarks': landmarks}
+        Args:
+            base_dir (string): Directory with all npy files for the images and the gt
+        """
+        self.base_dir = base_dir
+        print("initialized")
 
+    def __len__(self):
+        return len([name for name in os.listdir('.') if os.path.isfile(name)])
+
+    def __getitem__(self, idx):
+        #print("getting item")
+        images = np.load(self.base_dir + "/{}_img.npy".format(idx))
+        gt = np.load(self.base_dir + "/{}_gt.npy".format(idx))
+
+        sample = {'images': images, 'gt': gt}
+        #print(sample['images'].shape, sample['gt'].shape)
         return sample
-        """
+
