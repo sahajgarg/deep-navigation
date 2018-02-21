@@ -14,6 +14,8 @@ import os
 ## with solution p(t) = e^(At)p(0)
 
 ## Takes in time t and initial state p0
+
+"""
 def solve_disk(t, p0, runtime_config):
   A = np.zeros((4,4))
   A[0:2,2:4] = np.eye(2)
@@ -24,6 +26,20 @@ def solve_disk(t, p0, runtime_config):
   exp_At = np.asmatrix(exp_At)
   p0 = np.asmatrix(p0).T
   return np.dot(exp_At, p0)
+"""
+def generate_expA(runtime_config):
+  A = np.zeros((4,4))
+  A[0:2,2:4] = np.eye(2)
+  A[2:4,0:2] = runtime_config.spring * np.eye(2)
+  A[2:4,2:4] = runtime_config.drag * np.eye(2)
+  At = A
+  exp_At = scipy.linalg.expm(At)
+  exp_At = np.asmatrix(exp_At)
+  return exp_At
+
+def solve_disk(pcur, runtime_config):
+  A = generate_expA(runtime_config)
+  return np.dot(A, pcur)
 
 def init_disk(r=None, c=None):
   p0 = np.random.rand(4)
@@ -39,7 +55,7 @@ def init_disk(r=None, c=None):
 def draw_sol_onto_image(sol, col, img, path, rad):
   x = sol[0]
   y = sol[1]
-  cv2.circle(img, (WINDOW_SIZE/2 + x, WINDOW_SIZE/2 + y), rad, col, -1)
+  cv2.circle(img, (WINDOW_SIZE/2 + int(x), WINDOW_SIZE/2 + int(y)), rad, col, -1)
 
 def init_image():
   img = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 3))
@@ -57,13 +73,16 @@ def draw_sols_onto_image(sols, cols, rads, path):
 def run_disk(runtime_config, red_disk=False):
   p0, r, c= init_disk()
   if red_disk: p0, r, c = init_disk(r=10.0,c=(0,0,255))
-  sols = []
+  sols = [np.asmatrix(p0).T]
+  pcur = np.asmatrix(p0).T
   for t in range(runtime_config.steps):
-    sol = solve_disk(t, p0, runtime_config)
+    #sol = solve_disk(t, p0, runtime_config)
+    sol = solve_disk(pcur, runtime_config)
     noise = np.random.normal(runtime_config.mu, np.sqrt(runtime_config.sig2), (4,1))
-    noise[2:4] = 0.0
+    noise[0:2] = 0.0
     sol = sol + noise
     sols.append(sol)
+    pcur = sol
     #draw_sols_onto_image([sol],[(0,0,255)], "./imgs/" + str(t) + ".png")
   return (sols, r, c)
 
@@ -87,12 +106,12 @@ def run_and_save_disks(runtime_config):
   red_output = np.hstack(red_set[0])
   np.save("red.npy", red_output)
 
-SPRING_CONSTANT = -5.0
+SPRING_CONSTANT = -0.1
 DRAG_CONSTANT = -1.0
 DIM = 2
-WINDOW_SIZE = 512 ## 256 x 256 images 
+WINDOW_SIZE = 256 ## 256 x 256 images 
 MU = 0.0
-SIG2 = 25.0
+SIG2 = 200.0
 N = 10
 STEPS = 100
 class RConfig:

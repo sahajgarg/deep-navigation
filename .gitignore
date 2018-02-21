@@ -1,2 +1,4 @@
 dataset
 __pycache__/
+imgs/
+red.npy
