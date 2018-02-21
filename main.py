@@ -82,6 +82,7 @@ class KFNet(nn.Module):
 
     def forward(self, x):
         if self.mode == 'feed_forward':
+            x = x.view(-1, IMAGE_SIZE[0], IMAGE_SIZE[0], 3)
             x = F.max_pool2d(F.relu(self.conv1(x)), 2, stride=2)
             x = self.batchnorm1(x)
             x = F.max_pool2d(F.relu(self.conv2(x)), 2, stride=2)
@@ -90,6 +91,7 @@ class KFNet(nn.Module):
             x = F.relu(self.fc1(x))
             x = F.relu(self.fc2(x))
             z = self.fc3_z(x)
+            z = z.view(args.batch_size, -1, 2)
             return z
 
 
@@ -105,7 +107,7 @@ class KFNet(nn.Module):
             # If also R now: maximize LL
             # End to end: loss is MSE over all timesteps of output observation of timestep - gt_observation 
         if self.mode == 'feed_forward':
-            loss = F.mse_loss(predictions, labels)
+            loss = F.mse_loss(predictions.view(-1, 2), labels.view(-1, 2))
         elif self.mode == 'cnn_with_R_likelihood':
             loss = 0
         elif self.mode == 'backprop_kf':
@@ -118,13 +120,16 @@ model = KFNet()
 if args.cuda:
 	model.cuda()
 
-# optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.5)
+optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.5)
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
-train_dataset = KITTIDataset(frame_selections_file='sequences.csv',
-                                           images_dir='dataset/sequences/',
-                                           poses_dir='dataset/poses/')
+tran_dataset = RedDotDataset(base_dir='redDot/')
+
+# Parameters for loading KITTI Dataset
+#train_dataset = KITTIDataset(frame_selections_file='sequences.csv',
+#                                           images_dir='dataset/sequences/',
+#                                           poses_dir='dataset/poses/')
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size,
                         shuffle=True, **kwargs) ## Maybe: num_workers=4
 
@@ -134,7 +139,7 @@ def train(epoch):
     print("starting")
     for batch_idx, sampled_batch in enumerate(train_loader):
         image_data = sampled_batch['images']
-        gt_poses = sampled_batch['gt_poses']
+        gt_poses = sampled_batch['gt']
 
         if args.cuda:
             image_data, gt_poses = image_data.cuda(), gt_poses.cuda()
