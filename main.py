@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 
 # Training settings 
 parser = argparse.ArgumentParser(description='Deep Visual Odometry using Backprop KF')
-parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+parser.add_argument('--batch-size', type=int, default=1, metavar='N',
                     help='input batch size for training (default: 64)')
 parser.add_argument('--test-batch-size', type=int, default=100, metavar='N',
                     help='input batch size for testing (default: 1000)')
@@ -31,11 +31,11 @@ if args.cuda:
 class KFNet(nn.Module):
 
     def __init__(self):
-        super(Net, self).__init__()
+        super(KFNet, self).__init__()
         # Initialize convolutions 
         # Initialize Kalman filter graph structure 
 
-        Pass
+        pass
 
     def forward(self, x):
     	# Pass entire batch of images through convolutional net
@@ -48,11 +48,11 @@ model = KFNet()
 if args.cuda:
 	model.cuda()
 
-optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.5)
+# optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.5)
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
-train_dataset = KITTIDataset(frame_selections_file='dataset/train_frames.csv',
+train_dataset = KITTIDataset(frame_selections_file='sequences.csv',
                                            images_dir='dataset/sequences/',
                                            poses_dir='dataset/poses/')
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size,
@@ -60,15 +60,17 @@ train_loader = DataLoader(train_dataset, batch_size=args.batch_size,
 
 
 def train(epoch):
-    model.train()
+    #model.train()
+    print("starting")
     for batch_idx, sampled_batch in enumerate(train_loader):
-    	image_data = sampled_batch['images']
-    	gt_poses = sampled_batch['gt_poses']
-        print(image_data)
-        print(gt_poses)
+        image_data = sampled_batch['images']
+        gt_poses = sampled_batch['gt_poses']
+        print(batch_idx)
+        print(image_data.shape)
+        print(gt_poses.shape)
 
-        if args.cuda:
-            image_data, gt_poses = image_data.cuda(), gt_poses.cuda()
+        #if args.cuda:
+        #    image_data, gt_poses = image_data.cuda(), gt_poses.cuda()
 
         """
         image_data, gt_poses = Variable(image_data), Variable(gt_poses)
@@ -81,11 +83,11 @@ def train(epoch):
         optimizer.step()
         """
 
-
         if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.data[0]))
+            #print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+            #    epoch, batch_idx * len(data), len(train_loader.dataset),
+            #    100. * batch_idx / len(train_loader), loss.data[0]))
+            print("log interval")
 
 ## Later, add test function from https://github.com/pytorch/examples/blob/master/mnist/main.py
 for epoch in range(1, args.epochs + 1):

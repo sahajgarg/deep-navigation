@@ -25,43 +25,47 @@ class KITTIDataset(Dataset):
         self.frame_selections = pd.read_csv(frame_selections_file, header=None)
         self.images_dir = images_dir
         self.poses_dir = poses_dir
+        print("initialized")
 
     def __len__(self):
-        return len(self.frame_selections)
+        print(len(self.frame_selections[0]))
+        return len(self.frame_selections[0])
 
     def __getitem__(self, idx):
+        print("getting item")
     	# Construct image path (except for frame)
-        image_dir = self.images_dir + "{:02d}/{:s}/".format(frame_selections[0][idx], frame_selections[1][idx])
+        image_dir = self.images_dir + "{:02d}/{:s}/".format(self.frame_selections[0][idx], self.frame_selections[1][idx])
         images = []
 
     	# Load in all images in sequence 
-        for i in range(frame_selections[2][idx], frame_selections[2][idx] + frame_selections[3][idx] + 1):
+        for i in range(self.frame_selections[2][idx], self.frame_selections[2][idx] + self.frame_selections[3][idx] + 1):
             images.append(io.imread(image_dir + "{:06d}.png".format(i)))
 
-    	# Set poses as the corresponding list from the poses_dir 
+        # Set poses as the corresponding list from the poses_dir 
         poses = []
-        with open(self.poses_dir + "{:02d}.txt".format(frame_selections[0][idx])) as poses_file:
+        with open(self.poses_dir + "{:02d}.txt".format(self.frame_selections[0][idx])) as poses_file:
             for i, l in enumerate(poses_file):
-                if i < frame_selections[2][idx]:
+                if i < self.frame_selections[2][idx]:
                     continue
-                if i >= frame_selections[2][idx] + frame_selections[3][idx]:
+                if i >= self.frame_selections[2][idx] + self.frame_selections[3][idx]:
                     break
                 pose = [float(i) for i in l.split()]
                 poses.append(pose)
 
     	# Return sample
         sample = {'images': np.array(images), 'gt_poses': np.array(poses)}
+        print(sample['images'].shape, sample['gt_poses'].shape)
         return sample
 
 
 
-    	"""
+        """
         img_name = os.path.join(self.root_dir,
                                 self.landmarks_frame.iloc[idx, 0])
         image = io.imread(img_name)
         landmarks = self.landmarks_frame.iloc[idx, 1:].as_matrix()
         landmarks = landmarks.astype('float').reshape(-1, 2)
-        sample = {'image': image, 'landmarks': landmarks}
+        sample = {'image': image, 'laindmarks': landmarks}
 
         return sample
         """
