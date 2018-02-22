@@ -88,17 +88,20 @@ class KFNet(nn.Module):
         if self.mode == 'feed_forward':
             return z
 
-        L_m = torch.FloatTensor(L.shape[0], 2, 2).zero_()
-        L_m[:,0,0] = l[:,0]
-        L_m[:,1,0] = l[:,1]
-        L_m[:,1,1] = l[:,2]
+        L = self.fc3_L(x)
+        L_m = Variable(torch.FloatTensor(L.shape[0], 2, 2).zero_())
+        L_m[:,0,0] = L[:,0]
+        L_m[:,1,0] = L[:,1]
+        L_m[:,1,1] = L[:,2]
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
+
+        if self.mode == 'cnn_with_R_likelihood':
+            return z, R
 
     	# Pass entire batch of images through convolutional net
     	# Apply recurrence of KF
     	# Return final state estimate 
 
-        pass
 
     def loss(self, predictions, labels):
         # depending on mode
@@ -108,15 +111,15 @@ class KFNet(nn.Module):
         if self.mode == 'feed_forward':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
         elif self.mode == 'cnn_with_R_likelihood':
-            loss = 0
+            loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
         elif self.mode == 'backprop_kf':
             loss = 0
         
         return loss
 
 
-def init_model(args, is_cuda, batch_size):
-    model = KFNet('feed_forward', args)
+def init_model(args, is_cuda, batch_size, model_type):
+    model = KFNet(model_type, args)
     if is_cuda:
         model.cuda()
     params = [param for param in model.parameters() if param.requires_grad]
@@ -134,7 +137,7 @@ def init_model(args, is_cuda, batch_size):
                             shuffle=True, **kwargs) ## Maybe: num_workers=4
     return model, optimizer, train_loader
 
-def train(model, optimizer, train_loader, epoch, is_cuda, log_interval):
+def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_model):
     model.train()
     for batch_idx, sampled_batch in enumerate(train_loader):
         image_data = sampled_batch['images']
@@ -155,7 +158,9 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.data[0]))
-    torch.save(model, "epoch_" + str(epoch))
+    
+    if(save_model):
+        torch.save(model, "epoch_" + str(epoch))
 
 def test(epoch, model, loader, is_cuda):
     model.eval()
@@ -204,6 +209,8 @@ def main():
                         help='how many batches to wait before logging training status')
     parser.add_argument('--load_model', action='store_true', default=False, help='turn on model saving')
     parser.add_argument('--model-path', type=str, help='model to load')
+    parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
+    parser.add_argument('--model-type', type=str, default='feed-forward', help='model type')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
@@ -214,10 +221,10 @@ def main():
         os.makedirs("results")
 
     ## Later, add test function from https://github.com/pytorch/examples/blob/master/mnist/main.py
-    model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size)
+    model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size, args.model_type)
     if args.load_model and args.model_path: model = torch.load(args.model_path)
     for epoch in range(1, args.epochs + 1):
-        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval)
+        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
         test(epoch, model, train_loader, args.cuda)
 
 if __name__ == "__main__": main()
