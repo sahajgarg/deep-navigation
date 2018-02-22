@@ -3,6 +3,7 @@ import scipy.linalg
 import cv2
 import argparse
 import os
+from tqdm import tqdm
 ##dynamics of this system are of the form
 ## x'' = -kx + ax'
 ##
@@ -46,7 +47,7 @@ def init_disk(r=None, c=None):
   p0 -= 0.5
   p0 *= WINDOW_SIZE
   p0[2:4] = 0.0
-  if r is None: r = np.random.rand(1)*25
+  if r is None: r = np.random.rand(1)*12.5
   if c is None: c = np.random.rand(3)*255
   c = (int(c[0]), int(c[1]), int(c[2]))
   r = int(r)
@@ -76,7 +77,7 @@ def run_disk(runtime_config, red_disk=False):
   if red_disk: p0, r, c = init_disk(r=10.0,c=(0,0,255))
   sols = [np.asmatrix(p0).T]
   pcur = np.asmatrix(p0).T
-  for t in range(runtime_config.steps):
+  for t in range(runtime_config.steps-1):
     #sol = solve_disk(t, p0, runtime_config)
     sol = solve_disk(pcur, runtime_config)
     noise = np.random.normal(runtime_config.mu, np.sqrt(runtime_config.sig2), (4,1))
@@ -114,7 +115,7 @@ def run_and_save_disks(runtime_config, number):
 SPRING_CONSTANT = -0.1
 DRAG_CONSTANT = -1.0
 DIM = 2
-WINDOW_SIZE = 256 ## 256 x 256 images 
+WINDOW_SIZE = 128 ## 256 x 256 images 
 MU = 0.0
 SIG2 = 200.0
 N = 10
@@ -150,6 +151,6 @@ def main():
     os.makedirs("imgs")
   else:
     for files in os.listdir("imgs"): os.remove("imgs/" + files)
-  for i in range(NT): run_and_save_disks(runtime_config, str(i))
+  for i in tqdm(range(NT)): run_and_save_disks(runtime_config, str(i))
 
 if __name__ == "__main__": main()

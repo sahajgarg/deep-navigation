@@ -30,6 +30,7 @@ class KITTIDataset(Dataset):
         return len(self.frame_selections[0])
 
     def __getitem__(self, idx):
+        print(idx)
         #print("getting item")
     	# Construct image path (except for frame)
         image_dir = self.images_dir + "{:02d}/{:s}/".format(self.frame_selections[0][idx], self.frame_selections[1][idx])
@@ -67,12 +68,14 @@ class RedDotDataset(Dataset):
         print("initialized")
 
     def __len__(self):
-        return len([name for name in os.listdir('.') if os.path.isfile(name)])
+        l = int(len([name for name in os.listdir(self.base_dir) if os.path.isfile(self.base_dir + name)])/2)
+        #print(l)
+        return l
 
     def __getitem__(self, idx):
         #print("getting item")
         images = np.load(self.base_dir + "/{}_img.npy".format(idx))
-        gt = np.load(self.base_dir + "/{}_gt.npy".format(idx))
+        gt = np.load(self.base_dir + "/{}_pos.npy".format(idx))
 
         sample = {'images': images, 'gt': gt}
         #print(sample['images'].shape, sample['gt'].shape)
