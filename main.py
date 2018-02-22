@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import os
 import numpy as np
 import cv2
+from tqdm import tqdm
 
 IMAGE_SIZE = (128, 128)
 
@@ -36,14 +37,14 @@ class KFNet(nn.Module):
 
     def set_grads_for_mode():
         if self.mode == 'feed_forward':
-	    self.fc3_L.weights.requires_grad = False
-	    self.fc3_L.bias.requires_grad = False
+            self.fc3_L.weights.requires_grad = False
+            self.fc3_L.bias.requires_grad = False
         
-	if self.mode == 'feed_forward' or self.mode == 'cnn_with_R_likelihood':
-	    return
+        if self.mode == 'feed_forward' or self.mode == 'cnn_with_R_likelihood':
+            return
 
         if self.mode == 'backprop_kf':
-	    return 
+            return 
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -58,7 +59,7 @@ class KFNet(nn.Module):
         self.fc3_L = nn.Linear(32, 3)
 
     def build_KF(self):
-
+        pass
         # Consider single train example first, then batch
         # for each frame in sequence:
             # h'[t+1] = Ah[t]
@@ -91,6 +92,7 @@ class KFNet(nn.Module):
         L_m[:,1,0] = L[:,1]
         L_m[:,1,1] = L[:,2]
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
+        R = R.view(self.args.batch_size, -1, 2, 2)
 
         if self.mode == 'cnn_with_R_likelihood':
             return z, R
@@ -108,7 +110,14 @@ class KFNet(nn.Module):
         if self.mode == 'feed_forward':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
         elif self.mode == 'cnn_with_R_likelihood':
-            loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
+            z = predictions[0].view(-1, 2)
+            R = predictions[1].view(-1, 2)
+            labels = labels.contiguous().view(-1, 2)
+            #[batch_size][2] * [batch_size][2][2] * [batch_size][2]
+            R_inv = [t.inverse() for t in torch.functional.unbind(R)]
+            R_inv = torch.functional.stack(R_inv)
+            nll = torch.bmm(z, torch.bmm(R, z))
+            loss = torch.mean(nll) 
         elif self.mode == 'backprop_kf':
             loss = 0
         
@@ -136,7 +145,7 @@ def init_model(args, is_cuda, batch_size, model_type):
 
 def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_model):
     model.train()
-    for batch_idx, sampled_batch in enumerate(train_loader):
+    for batch_idx, sampled_batch in enumerate(tqdm(train_loader)):
         image_data = sampled_batch['images']
         gt_poses = sampled_batch['gt']
 
@@ -151,16 +160,17 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         loss.backward()
         optimizer.step()
 
-        if batch_idx % log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.data[0]))
+        #if batch_idx % log_interval == 0:
+        #    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+        #        epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
+        #        100. * batch_idx / len(train_loader), loss.data[0]))
     
     if(save_model):
-        torch.save(model, "epoch_" + str(epoch))
+        torch.save(model, "epoch/" + str(epoch))
 
 def test(epoch, model, loader, is_cuda):
     model.eval()
+    loss = []
     for batch_idx, sampled_batch in enumerate(loader):
         image_data = sampled_batch['images']
         gt_poses = sampled_batch['gt']
@@ -170,8 +180,9 @@ def test(epoch, model, loader, is_cuda):
 
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
-        loss = model.loss(output, gt_poses[:,0:2,:].squeeze())
+        loss.append(F.mse_loss(output.view(-1, 2), gt_poses[:,0:2,:].squeeze().contiguous().view(-1, 2)).data[0])
         visualize_result(gt_poses.squeeze().view(-1,4), output.squeeze(), str(epoch) + "_" + str(batch_idx))
+    print('Train Epoch: {} \tLoss: {:.6f}'.format(epoch, np.mean(loss)))
 
 def init_image():
     img = np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[0], 3))
@@ -180,8 +191,9 @@ def init_image():
 
 def write_traj_on_image(img, traj, color):
     N = traj.shape[1]
+    print traj.shape
     for i in range(N-1):
-        cv2.line(img, (traj[0,i], traj[1,i]), (traj[0,i+1], traj[1,i+1]), color)
+        cv2.line(img, (traj[0,i]+64, traj[1,i]+64), (traj[0,i+1]+64, traj[1,i+1]+64), color)
     
 def visualize_result(gt_traj, est_traj, idx):
     img = init_image()
@@ -202,12 +214,12 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--load_model', action='store_true', default=False, help='turn on model saving')
     parser.add_argument('--model-path', type=str, help='model to load')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
-    parser.add_argument('--model-type', type=str, default='feed-forward', help='model type')
+    parser.add_argument('--model-type', type=str, default='feed_forward', help='model type')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
