@@ -1,4 +1,7 @@
 dataset
+results/
+redDot/
+epoch*
 __pycache__/
 imgs/
 red.npy

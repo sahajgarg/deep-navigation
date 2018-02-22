@@ -12,8 +12,6 @@ import cv2
 
 IMAGE_SIZE = (128, 128)
 
-
-
 class KFNet(nn.Module):
 
     """
@@ -34,6 +32,15 @@ class KFNet(nn.Module):
     def resp_norm(self, input):
         pass
 
+    def change_mode(self, mode): self.mode = mode
+
+    def get_params_for_mode():
+        if self.mode == 'feed_forward':
+            return None
+        elif self.mode == 'cnn_with_R_likelihood':
+            return None
+        elif self.mode == 'backprop_kf':
+            return None
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -141,6 +148,7 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.data[0]))
+    torch.save(model, "epoch_" + str(epoch))
 
 def test(epoch, model, loader, is_cuda):
     model.eval()
@@ -163,7 +171,6 @@ def init_image():
 
 def write_traj_on_image(img, traj, color):
     N = traj.shape[1]
-    print(traj.shape)
     for i in range(N-1):
         cv2.line(img, (traj[0,i], traj[1,i]), (traj[0,i+1], traj[1,i+1]), color)
     
@@ -188,7 +195,8 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
-
+    parser.add_argument('--load_model', action='store_true', default=False, help='turn on model saving')
+    parser.add_argument('--model-path', type=str, help='model to load')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
@@ -200,6 +208,7 @@ def main():
 
     ## Later, add test function from https://github.com/pytorch/examples/blob/master/mnist/main.py
     model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size)
+    if args.load_model and args.model_path: model = torch.load(args.model_path)
     for epoch in range(1, args.epochs + 1):
         train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval)
         test(epoch, model, train_loader, args.cuda)
