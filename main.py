@@ -191,7 +191,7 @@ def init_image():
 
 def write_traj_on_image(img, traj, color):
     N = traj.shape[1]
-    print traj.shape
+    print(traj.shape)
     for i in range(N-1):
         cv2.line(img, (traj[0,i]+64, traj[1,i]+64), (traj[0,i+1]+64, traj[1,i+1]+64), color)
     
