@@ -34,13 +34,16 @@ class KFNet(nn.Module):
 
     def change_mode(self, mode): self.mode = mode
 
-    def get_params_for_mode():
+    def set_grads_for_mode():
         if self.mode == 'feed_forward':
-            return None
-        elif self.mode == 'cnn_with_R_likelihood':
-            return None
-        elif self.mode == 'backprop_kf':
-            return None
+	    self.fc3_L.weights.requires_grad = False
+	    self.fc3_L.bias.requires_grad = False
+        
+	if self.mode == 'feed_forward' or self.mode == 'cnn_with_R_likelihood':
+	    return
+
+        if self.mode == 'backprop_kf':
+	    return 
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -52,14 +55,9 @@ class KFNet(nn.Module):
         self.fc1 = nn.Linear(200, 16)
         self.fc2 = nn.Linear(16, 32)
         self.fc3_z = nn.Linear(32, 2)
-
-        if self.mode != 'feed_forward':
-            self.fc3_L = nn.Linear(32, 3)
+        self.fc3_L = nn.Linear(32, 3)
 
     def build_KF(self):
-        if self.mode == 'feed_forward' or 'cnn_with_R_likelihood':
-            ## Really should build piecewise KF
-            return
 
         # Consider single train example first, then batch
         # for each frame in sequence:
