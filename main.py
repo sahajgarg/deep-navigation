@@ -154,7 +154,7 @@ def test(epoch, model, loader, is_cuda):
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
         loss = model.loss(output, gt_poses[:,0:2,:].squeeze())
-        visualize_result(output.squeeze(), gt_poses.squeeze().view(-1,4), str(epoch) + "_" + str(batch_idx))
+        visualize_result(gt_poses.squeeze().view(-1,4), output.squeeze(), str(epoch) + "_" + str(batch_idx))
 
 def init_image():
     img = np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[0], 3))
