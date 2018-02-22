@@ -26,13 +26,16 @@ class KFNet(nn.Module):
         self.build_conv()
         self.build_KF()
         self.args = args
+	self.set_grads_for_mode()
 
     # how do I define a function not on self?
     # Does using this as a self mean that each norm layer will be identical//is that an issue
     def resp_norm(self, input):
         pass
 
-    def change_mode(self, mode): self.mode = mode
+    def change_mode(self, mode):
+	self.mode = mode
+	self.set_grads_for_mode()
 
     def set_grads_for_mode():
         if self.mode == 'feed_forward':
@@ -116,8 +119,8 @@ def init_model(args, is_cuda, batch_size):
     model = KFNet('feed_forward', args)
     if is_cuda:
         model.cuda()
-
-    optimizer = optim.Adam(model.parameters())
+    params = [param for param in model.parameters() if param.requires_grad]
+    optimizer = optim.Adam(params)
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if is_cuda else {}
 
