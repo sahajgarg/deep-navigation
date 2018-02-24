@@ -29,6 +29,7 @@ def solve_disk(t, p0, runtime_config):
   p0 = np.asmatrix(p0).T
   return np.dot(exp_At, p0)
 """
+
 def generate_expA(runtime_config):
   A = np.zeros((4,4))
   A[0:2,2:4] = np.eye(2)
@@ -89,6 +90,12 @@ def run_disk(runtime_config, red_disk=False):
     #draw_sols_onto_image([sol],[(0,0,255)], "./imgs/" + str(t) + ".png")
   return (sols, r, c)
 
+def write_traj_on_image(img, traj, color):
+  N = traj.shape[1]
+  c = WINDOW_SIZE/2
+  for i in range(N-1):
+    cv2.line(img, (int(c + traj[0,i]), int(c + traj[1,i])), (int(c + traj[0,i+1]), int(c + traj[1,i+1])), color) 
+
 def run_and_save_disks(runtime_config, number):
   n = runtime_config.n
   sol_sets = [run_disk(runtime_config) for i in range(n)]
@@ -113,6 +120,9 @@ def run_and_save_disks(runtime_config, number):
   ##write out trajectory
   red_output = np.hstack(red_set[0])
   np.save("./redDot/" + number + "_pos.npy", red_output)
+  traj_img = init_image()
+  write_traj_on_image(traj_img, red_output, (0,0,255))
+  cv2.imwrite('./orig_traj/' + number + '.png', traj_img)
 
 SPRING_CONSTANT = -0.1
 DRAG_CONSTANT = -1.0
@@ -148,6 +158,11 @@ def main():
   parser.add_argument('--time-steps', '-t', type=int, help="Number of steps to sample")
   arg_dict = vars(parser.parse_args())
   runtime_config = RConfig(arg_dict)  
+
+  if not os.path.exists("redDot"):
+    os.makedirs("redDot")
+  if not os.path.exists("orig_traj"):
+    os.makedirs("orig_traj")
 
   if not os.path.exists("imgs"): 
     os.makedirs("imgs")
