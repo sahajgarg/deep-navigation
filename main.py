@@ -162,7 +162,7 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         optimizer.zero_grad()
         output = model(image_data)
 
-        loss = model.loss(output, gt_poses[:,0:2,:].squeeze())
+        loss = model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1))
         loss.backward()
         optimizer.step()
 
@@ -186,8 +186,8 @@ def test(epoch, model, loader, is_cuda):
 
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
-        loss.append(F.mse_loss(output.view(-1, 2), gt_poses[:,0:2,:].squeeze().contiguous().view(-1, 2)).data[0])
-        visualize_result(gt_poses.squeeze().view(-1,4), output.squeeze(), str(epoch) + "_" + str(batch_idx))
+        loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
+        visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
     print('Train Epoch: {} \tLoss: {:.6f}'.format(epoch, np.mean(loss)))
 
 def init_image():

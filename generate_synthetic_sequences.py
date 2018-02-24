@@ -4,6 +4,7 @@ import cv2
 import argparse
 import os
 from tqdm import tqdm
+import random
 ##dynamics of this system are of the form
 ## x'' = -kx + ax'
 ##
@@ -93,6 +94,7 @@ def run_and_save_disks(runtime_config, number):
   sol_sets = [run_disk(runtime_config) for i in range(n)]
   red_set = run_disk(runtime_config, red_disk=True)
   sol_sets.append(red_set)
+  random.shuffle(sol_sets)
 
   ##draw images
   cols = [elem[2] for elem in sol_sets]
@@ -103,7 +105,7 @@ def run_and_save_disks(runtime_config, number):
     time_sols.append(sols_t)
   imgs = []
   for t in range(runtime_config.steps): 
-    img = draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + str(t) + ".png", draw=False)
+    img = draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + number + "_" + str(t) + ".png", draw=False)
     imgs.append(img)
 
   imgs_full = np.stack(imgs, axis=0)
