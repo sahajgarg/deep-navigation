@@ -27,7 +27,7 @@ class KFNet(nn.Module):
         self.build_conv()
         self.batch_size = batch_size
         self.set_grads_for_mode()
-        if mode == 'bkf':
+        if mode == 'BKF':
             dynamics = np.load(dynamics_path)
             self.A = dynamics['A']
             self.B = dynamics['B']
@@ -140,7 +140,7 @@ class KFNet(nn.Module):
         if self.mode == 'R':
             return z, R
 
-        if self.mode == 'backprop_kf':
+        if self.mode == 'BKF':
             return run_KF(z, R)
     	# Pass entire batch of images through convolutional net
     	# Apply recurrence of KF
