@@ -56,13 +56,13 @@ def init_disk(r=None, c=None):
 def draw_sol_onto_image(sol, col, img, path, rad):
   x = sol[0]
   y = sol[1]
-  cv2.circle(img, (WINDOW_SIZE/2 + int(x), WINDOW_SIZE/2 + int(y)), rad, col, -1)
+  cv2.circle(img, (int(WINDOW_SIZE/2) + int(x), int(WINDOW_SIZE/2) + int(y)), rad, col, -1)
 
 def init_image():
   img = np.zeros((WINDOW_SIZE, WINDOW_SIZE, 3))
   img.fill(0)
-  cv2.line(img, (WINDOW_SIZE/2, 0), (WINDOW_SIZE/2, WINDOW_SIZE-1), (0,0,0))
-  cv2.line(img, (0, WINDOW_SIZE/2), (WINDOW_SIZE-1, WINDOW_SIZE/2), (0,0,0))
+  cv2.line(img, (int(WINDOW_SIZE/2), 0), (int(WINDOW_SIZE/2), int(WINDOW_SIZE)-1), (0,0,0))
+  cv2.line(img, (0, int(WINDOW_SIZE/2)), (WINDOW_SIZE-1, int(WINDOW_SIZE/2)), (0,0,0))
   return img
 
 def draw_sols_onto_image(sols, cols, rads, path, draw=False):
@@ -107,10 +107,10 @@ def run_and_save_disks(runtime_config, number):
     imgs.append(img)
 
   imgs_full = np.stack(imgs, axis=0)
-  np.save(number + "_img.npy", imgs_full)
+  np.save("./redDot/" + number + "_img.npy", imgs_full)
   ##write out trajectory
   red_output = np.hstack(red_set[0])
-  np.save(number + "_pos.npy", red_output)
+  np.save("./redDot/" + number + "_pos.npy", red_output)
 
 SPRING_CONSTANT = -0.1
 DRAG_CONSTANT = -1.0

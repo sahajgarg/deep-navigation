@@ -27,7 +27,7 @@ class KFNet(nn.Module):
         self.build_conv()
         self.build_KF()
         self.args = args
-	self.set_grads_for_mode()
+        self.set_grads_for_mode()
 
     # how do I define a function not on self?
     # Does using this as a self mean that each norm layer will be identical//is that an issue
@@ -35,12 +35,12 @@ class KFNet(nn.Module):
         pass
 
     def change_mode(self, mode):
-	self.mode = mode
-	self.set_grads_for_mode()
+        self.mode = mode
+        self.set_grads_for_mode()
 
-    def set_grads_for_mode():
+    def set_grads_for_mode(self):
         if self.mode == 'feed_forward':
-            self.fc3_L.weights.requires_grad = False
+            self.fc3_L.weight.requires_grad = False
             self.fc3_L.bias.requires_grad = False
         
         if self.mode == 'feed_forward' or self.mode == 'cnn_with_R_likelihood':
@@ -114,12 +114,15 @@ class KFNet(nn.Module):
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
         elif self.mode == 'cnn_with_R_likelihood':
             z = predictions[0].view(-1, 2)
-            R = predictions[1].view(-1, 2)
+            R = predictions[1].view(-1, 2, 2)
             labels = labels.contiguous().view(-1, 2)
             #[batch_size][2] * [batch_size][2][2] * [batch_size][2]
             R_inv = [t.inverse() for t in torch.functional.unbind(R)]
             R_inv = torch.functional.stack(R_inv)
-            nll = torch.bmm(z, torch.bmm(R, z))
+            #nll_det = [-torch.log(1/torch.sqrt(t[0][0]*t[1][1]-t[0][1]*t[1][0])) for t in torch.functional.unbind(R)]
+            # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
+            nll_det = 1/2*torch.log(t[:,0,0]*t[:,1,1]-t[:,0,1]*t[:,1,0])
+            nll = torch.bmm(z, torch.bmm(R, z)) + nll_det
             loss = torch.mean(nll) 
         elif self.mode == 'backprop_kf':
             loss = 0
@@ -168,7 +171,7 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         #        epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
         #        100. * batch_idx / len(train_loader), loss.data[0]))
     
-    if(save_model):
+    if save_model and epoch % 0 == 10:
         torch.save(model, "epoch/" + str(epoch))
 
 def test(epoch, model, loader, is_cuda):
@@ -193,10 +196,9 @@ def init_image():
     return img
 
 def write_traj_on_image(img, traj, color):
-    N = traj.shape[1]
-    print(traj.shape)
+    N = traj.shape[0]
     for i in range(N-1):
-        cv2.line(img, (traj[0,i]+64, traj[1,i]+64), (traj[0,i+1]+64, traj[1,i+1]+64), color)
+        cv2.line(img, (traj[i,0]+64, traj[i,1]+64), (traj[i+1,0]+64, traj[i+1,1]+64), color)
     
 def visualize_result(gt_traj, est_traj, idx):
     img = init_image()

@@ -74,8 +74,8 @@ class RedDotDataset(Dataset):
 
     def __getitem__(self, idx):
         #print("getting item")
-        images = np.load(self.base_dir + "/{}_img.npy".format(idx))
-        gt = np.load(self.base_dir + "/{}_pos.npy".format(idx))
+        images = np.load(self.base_dir + "/{}_img.npy".format(idx), encoding='latin1')
+        gt = np.load(self.base_dir + "/{}_pos.npy".format(idx), encoding='latin1')
 
         sample = {'images': images, 'gt': gt}
         #print(sample['images'].shape, sample['gt'].shape)
