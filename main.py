@@ -90,14 +90,13 @@ class KFNet(nn.Module):
             return z
 
         L = self.fc3_L(x)
-        print(L)
         L_m = Variable(torch.FloatTensor(L.shape[0], 2, 2).zero_()).cuda()
         L_m[:,0,0] = L[:,0]
         L_m[:,1,0] = L[:,1]
         L_m[:,1,1] = L[:,2]
-        print(L_m)
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
         R = R.view(self.args.batch_size, -1, 2, 2)
+        print(R)
 
         if self.mode == 'R':
             return z, R
@@ -226,7 +225,7 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                         help='how many batches to wait before logging training status')
-    parser.add_argument('--load_model', action='store_true', default=False, help='turn on model saving')
+    parser.add_argument('--load-model', action='store_true', default=False, help='turn on model saving')
     parser.add_argument('--model-path', type=str, help='model to load')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
     parser.add_argument('--model-type', type=str, default='FF', help='model type')
@@ -242,12 +241,12 @@ def main():
     ## Later, add test function from https://github.com/pytorch/examples/blob/master/mnist/main.py
     model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size, args.model_type)
     if args.load_model and args.model_path: model = torch.load(args.model_path)
-    #model.change_mode('FF')
-    #for epoch in range(1, 11):
-    #    train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-    #    test(epoch, model, train_loader, args.cuda)
-    model.change_mode('R')
+    model.change_mode('FF')
     for epoch in range(1, 11):
+        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+        test(epoch, model, train_loader, args.cuda)
+    model.change_mode('R')
+    for epoch in range(11, 21):
         train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
         test(epoch, model, train_loader, args.cuda)
 
