@@ -76,7 +76,7 @@ def draw_sols_onto_image(sols, cols, rads, path, draw=False):
 
 def run_disk(runtime_config, red_disk=False):
   p0, r, c= init_disk()
-  if red_disk: p0, r, c = init_disk(r=10.0,c=(0,0,255))
+  if red_disk: p0, r, c = init_disk(r=5.0,c=(0,0,255))
   sols = [np.asmatrix(p0).T]
   pcur = np.asmatrix(p0).T
   for t in range(runtime_config.steps-1):
@@ -112,7 +112,7 @@ def run_and_save_disks(runtime_config, number):
     time_sols.append(sols_t)
   imgs = []
   for t in range(runtime_config.steps): 
-    img = draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + number + "_" + str(t) + ".png", draw=False)
+    img = draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + number + "_" + str(t) + ".png", draw=True)
     imgs.append(img)
 
   imgs_full = np.stack(imgs, axis=0)
