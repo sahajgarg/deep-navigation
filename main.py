@@ -21,18 +21,20 @@ class KFNet(nn.Module):
             'cnn_with_R_likelihood'
             'backprop_kf'
     """
-    def __init__(self, mode, batch_size, dynamics):
+    def __init__(self, mode, batch_size, dynamics_path=None):
         super(KFNet, self).__init__()
         self.mode = mode
         self.build_conv()
         self.batch_size = batch_size
         self.set_grads_for_mode()
-        self.A = dynamics['A']
-        self.B = dynamics['B']
-        self.C = dynamics['C']
-        ## TURN ALL OF THESE INTO HUGE
+        if mode == 'bkf':
+            dynamics = np.load(dynamics_path)
+            self.A = dynamics['A']
+            self.B = dynamics['B']
+            self.C = dynamics['C']
+            ## TURN ALL OF THESE INTO HUGE
 
-        #self.sequence_len = dynamics['sequence_len']
+            #self.sequence_len = dynamics['sequence_len']
 
     # how do I define a function not on self?
     # Does using this as a self mean that each norm layer will be identical//is that an issue
@@ -173,10 +175,7 @@ def binv(x):
     return torch.functional.stack(inv)
 
 def init_model(args, is_cuda, batch_size, model_type):
-    dynamics = np.load('./redDot/dynamics.npy')
-
-
-    model = KFNet(model_type, args.batch_size, dynamics)
+    model = KFNet(model_type, args.batch_size, dynamics_path='./redDot/dynamics.npy')
     if is_cuda:
         model.cuda()
     params = [param for param in model.parameters() if param.requires_grad]
