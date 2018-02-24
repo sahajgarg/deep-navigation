@@ -21,13 +21,18 @@ class KFNet(nn.Module):
             'cnn_with_R_likelihood'
             'backprop_kf'
     """
-    def __init__(self, mode, args):
+    def __init__(self, mode, batch_size, dynamics):
         super(KFNet, self).__init__()
         self.mode = mode
         self.build_conv()
-        self.build_KF()
-        self.args = args
+        self.batch_size = batch_size
         self.set_grads_for_mode()
+        self.A = dynamics['A']
+        self.B = dynamics['B']
+        self.C = dynamics['C']
+        ## TURN ALL OF THESE INTO HUGE
+
+        #self.sequence_len = dynamics['sequence_len']
 
     # how do I define a function not on self?
     # Does using this as a self mean that each norm layer will be identical//is that an issue
@@ -61,8 +66,39 @@ class KFNet(nn.Module):
         self.fc3_z = nn.Linear(32, 2)
         self.fc3_L = nn.Linear(32, 3)
 
-    def build_KF(self):
-        pass
+    def run_KF(self, z, R):
+        outputs = []
+        # 4 should be z.size(2)
+        h = Variable(torch.zeros(z.size(0), z.size(1), 4).double(), requires_grad=False)
+        hprime = Variable(torch.zeros(z.size(0), z.size(1), 4).double(), requires_grad=False)
+
+        # s is covariance matrix
+        s = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).double(), requires_grad=False)
+        sprime = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).double(), requires_grad=False)
+
+        # Add learned Q variable
+        Q = Variable(4,4, requires_grad=True)
+        ## TODO: CUDA?
+
+        ###TODO:: INITIALIZE ALL THE ZEROTH TIMES
+
+        # K_t for a single time step; overwrite it each time
+        K_t = Variable(torch.zeros(x.size(0), 4, 4).double(), requires_grad=False)
+        ## NEED A LARGE ASS IDENTITY MATRIX
+        I = None
+
+        for t, z_t, R_t in enumerate(zip(z, R).chunk(z.size(1), dim = 1)):
+            ## PRobably need to reduce dims on the h thing *********DO WE NEED TO SQUEEEZZZZEEEEEE******
+            hprime[:,t+1,:] = torch.bmm(self.A, h[:,t,:]) ## 100 x 4
+            ## ISSUE: We want the last thing to add to every single batch element but it probably doesn't
+            sprime[:,t+1,:,:] = torch.bmm(self.A, torch.bmm(s[t], self.A.T)) + self.B @ Q @ self.B.T
+## FIx the *
+            K_t = torch.bmm(sprime[t+1], torch.bmm(self.C.T, binv(torch.bmm(C.T, torch.bmm(sprime[t+1], C.T)) + R[t+1])))
+            h[:,t+1,:] = hprime[:,t+1,:] + torch.bmm(K_t, z[:,t+1,:] - torch.bmm(C, hprime[:,t+1,:])) 
+            # BATCH * 4 * 4 // 
+            s[:,t+1,:,:] = torch.bmm((I - torch.bmm(K_t, C)), sprime[:,t+1,:,:])
+
+        return h
         # Consider single train example first, then batch
         # for each frame in sequence:
             # h'[t+1] = Ah[t]
@@ -84,7 +120,7 @@ class KFNet(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         z = self.fc3_z(x)
-        z = z.view(self.args.batch_size, -1, 2)
+        z = z.view(self.batch_size, -1, 2)
 
         if self.mode == 'feed_forward':
             return z
@@ -95,11 +131,13 @@ class KFNet(nn.Module):
         L_m[:,1,0] = L[:,1]
         L_m[:,1,1] = L[:,2]
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
-        R = R.view(self.args.batch_size, -1, 2, 2)
+        R = R.view(self.batch_size, -1, 2, 2)
 
         if self.mode == 'cnn_with_R_likelihood':
             return z, R
 
+        if self.mode == 'backprop_kf':
+            return run_KF(z, R)
     	# Pass entire batch of images through convolutional net
     	# Apply recurrence of KF
     	# Return final state estimate 
@@ -130,8 +168,15 @@ class KFNet(nn.Module):
         return loss
 
 
+def binv(x):
+    inv = [t.inverse() for t in torch.functional.unbind(x)]
+    return torch.functional.stack(inv)
+
 def init_model(args, is_cuda, batch_size, model_type):
-    model = KFNet(model_type, args)
+    dynamics = np.load('./redDot/dynamics.npy')
+
+
+    model = KFNet(model_type, args.batch_size, dynamics)
     if is_cuda:
         model.cuda()
     params = [param for param in model.parameters() if param.requires_grad]
@@ -162,7 +207,7 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         optimizer.zero_grad()
         output = model(image_data)
 
-        loss = model.loss(output, gt_poses[:,0:2,:].squeeze())
+        loss = model.loss(output, gt_poses[:,0:2,:].transpose(1, 2))
         loss.backward()
         optimizer.step()
 
