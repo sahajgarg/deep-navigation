@@ -133,8 +133,9 @@ class KFNet(nn.Module):
         L_m[:,1,0] = L[:,1]
         L_m[:,1,1] = L[:,2]
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
-        R = R.view(self.args.batch_size, -1, 2, 2)
-        print(R)
+        R = R.view(self.batch_size, -1, 2, 2)
+        print("EIGENBITCH\n")
+        print(torch.eig(R[0,0])[0][:,0])
 
         if self.mode == 'R':
             return z, R
@@ -160,11 +161,18 @@ class KFNet(nn.Module):
             #[batch_size][2] * [batch_size][2][2] * [batch_size][2]
             R_inv = [t.inverse() for t in torch.functional.unbind(R)]
             R_inv = torch.functional.stack(R_inv)
-            zv = z.view(z.shape[0], z.shape[1], 1)
+            error = z - labels
+            error = error.view(error.shape[0], error.shape[1], 1)
             #nll_det = [-torch.log(1/torch.sqrt(t[0][0]*t[1][1]-t[0][1]*t[1][0])) for t in torch.functional.unbind(R)]
             # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
             nll_det = 1/2*torch.log(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
-            nll = torch.bmm(torch.transpose(zv,2,1), torch.bmm(R_inv, zv)) + nll_det
+            nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
+            print("NLLLLL BITCH\n")
+            print(torch.max(nll))
+            print(torch.min(nll))
+            #print(torch.max(nll_det))
+            #print(torch.min(nll_det))
+            #print(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
             loss = torch.mean(nll) 
         elif self.mode == 'BKF':
             loss = 0
@@ -286,9 +294,9 @@ def main():
     model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size, args.model_type)
     if args.load_model and args.model_path: model = torch.load(args.model_path)
     model.change_mode('FF')
-    for epoch in range(1, 11):
-        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-        test(epoch, model, train_loader, args.cuda)
+    #for epoch in range(1, 11):
+    #    train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+    #    test(epoch, model, train_loader, args.cuda)
     model.change_mode('R')
     for epoch in range(11, 21):
         train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
