@@ -17,9 +17,9 @@ class KFNet(nn.Module):
 
     """
         Allowable modes include:
-            'feed_forward'
-            'cnn_with_R_likelihood'
-            'backprop_kf'
+            'feed_forward (FF)'
+            'cnn_with_R_likelihood (R)'
+            'backprop_kf (BKF)'
     """
     def __init__(self, mode, args):
         super(KFNet, self).__init__()
@@ -39,14 +39,14 @@ class KFNet(nn.Module):
         self.set_grads_for_mode()
 
     def set_grads_for_mode(self):
-        if self.mode == 'feed_forward':
+        if self.mode == 'FF':
             self.fc3_L.weight.requires_grad = False
             self.fc3_L.bias.requires_grad = False
         
-        if self.mode == 'feed_forward' or self.mode == 'cnn_with_R_likelihood':
+        if self.mode == 'R':
             return
 
-        if self.mode == 'backprop_kf':
+        if self.mode == 'BFK':
             return 
 
     def build_conv(self):
@@ -86,18 +86,20 @@ class KFNet(nn.Module):
         z = self.fc3_z(x)
         z = z.view(self.args.batch_size, -1, 2)
 
-        if self.mode == 'feed_forward':
+        if self.mode == 'FF':
             return z
 
         L = self.fc3_L(x)
-        L_m = Variable(torch.FloatTensor(L.shape[0], 2, 2).zero_())
+        print(L)
+        L_m = Variable(torch.FloatTensor(L.shape[0], 2, 2).zero_()).cuda()
         L_m[:,0,0] = L[:,0]
         L_m[:,1,0] = L[:,1]
         L_m[:,1,1] = L[:,2]
+        print(L_m)
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
         R = R.view(self.args.batch_size, -1, 2, 2)
 
-        if self.mode == 'cnn_with_R_likelihood':
+        if self.mode == 'R':
             return z, R
 
     	# Pass entire batch of images through convolutional net
@@ -110,21 +112,22 @@ class KFNet(nn.Module):
             # If just training CNN: MSE loss on positions 
             # If also R now: maximize LL
             # End to end: loss is MSE over all timesteps of output observation of timestep - gt_observation 
-        if self.mode == 'feed_forward':
+        if self.mode == 'FF':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
-        elif self.mode == 'cnn_with_R_likelihood':
+        elif self.mode == 'R':
             z = predictions[0].view(-1, 2)
             R = predictions[1].view(-1, 2, 2)
             labels = labels.contiguous().view(-1, 2)
             #[batch_size][2] * [batch_size][2][2] * [batch_size][2]
             R_inv = [t.inverse() for t in torch.functional.unbind(R)]
             R_inv = torch.functional.stack(R_inv)
+            zv = z.view(z.shape[0], z.shape[1], 1)
             #nll_det = [-torch.log(1/torch.sqrt(t[0][0]*t[1][1]-t[0][1]*t[1][0])) for t in torch.functional.unbind(R)]
             # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
-            nll_det = 1/2*torch.log(t[:,0,0]*t[:,1,1]-t[:,0,1]*t[:,1,0])
-            nll = torch.bmm(z, torch.bmm(R, z)) + nll_det
+            nll_det = 1/2*torch.log(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
+            nll = torch.bmm(torch.transpose(zv,2,1), torch.bmm(R_inv, zv)) + nll_det
             loss = torch.mean(nll) 
-        elif self.mode == 'backprop_kf':
+        elif self.mode == 'BKF':
             loss = 0
         
         return loss
@@ -171,7 +174,7 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         #        epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
         #        100. * batch_idx / len(train_loader), loss.data[0]))
     
-    if save_model and epoch % 0 == 10:
+    if save_model and epoch % 2 == 0:
         torch.save(model, "epoch/" + str(epoch))
 
 def test(epoch, model, loader, is_cuda):
@@ -186,9 +189,11 @@ def test(epoch, model, loader, is_cuda):
 
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
+        if model.mode != 'FF': output = output[0]
+        #loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1)).data[0])
         loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
         visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
-    print('Train Epoch: {} \tLoss: {:.6f}'.format(epoch, np.mean(loss)))
+    print('Test Epoch: {} \tLoss: {:.6f}'.format(epoch, np.mean(loss)))
 
 def init_image():
     img = np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[0], 3))
@@ -224,7 +229,7 @@ def main():
     parser.add_argument('--load_model', action='store_true', default=False, help='turn on model saving')
     parser.add_argument('--model-path', type=str, help='model to load')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
-    parser.add_argument('--model-type', type=str, default='feed_forward', help='model type')
+    parser.add_argument('--model-type', type=str, default='FF', help='model type')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
@@ -237,7 +242,12 @@ def main():
     ## Later, add test function from https://github.com/pytorch/examples/blob/master/mnist/main.py
     model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size, args.model_type)
     if args.load_model and args.model_path: model = torch.load(args.model_path)
-    for epoch in range(1, args.epochs + 1):
+    #model.change_mode('FF')
+    #for epoch in range(1, 11):
+    #    train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+    #    test(epoch, model, train_loader, args.cuda)
+    model.change_mode('R')
+    for epoch in range(1, 11):
         train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
         test(epoch, model, train_loader, args.cuda)
 
