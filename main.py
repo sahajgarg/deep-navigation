@@ -23,19 +23,18 @@ class KFNet(nn.Module):
             'cnn_with_R_likelihood (R)'
             'backprop_kf (BKF)'
     """
-    def __init__(self, mode, batch_size, dynamics_path=None):
+    def __init__(self, batch_size, dynamics_path=None):
         super(KFNet, self).__init__()
-        self.mode = mode
         self.build_conv()
+        self.R = Variable(torch.eye(2).float(), requires_grad=True)
         self.batch_size = batch_size
         self.set_grads_for_mode()
-        if mode == 'BKF':
+        if dynamics_path:
             dynamics = np.load(dynamics_path)
             self.A = dynamics['A']
             self.B = dynamics['B']
             self.C = dynamics['C']
             ## TURN ALL OF THESE INTO HUGE
-
             #self.sequence_len = dynamics['sequence_len']
 
     # how do I define a function not on self?
@@ -49,11 +48,33 @@ class KFNet(nn.Module):
 
     def set_grads_for_mode(self):
         if self.mode == 'FF':
+            ## Ignore these gradients when training FF
+            ## Why do you need to do weight and bias separately?
+
             self.fc3_L.weight.requires_grad = False
             self.fc3_L.bias.requires_grad = False
-        
+            self.R.requires_grad = False
+
+            ## Turn on these gradients
+
+        if self.mode == 'RC':
+            # Maybe I need weight and bias
+            self.conv1.requires_grad = False
+            self.batchnorm1.requires_grad = False
+            self.conv2.requires_grad = False
+            self.batchnorm2.requires_grad = False
+            self.fc1.requires_grad = False
+            self.fc2.requires_grad = False
+            self.fc3_z.requires_grad = False
+            self.fc3_L.requires_grad = False
+
+            ## Start considering these gradiens again: 
+            self.R.requires_grad = True
+
+
         if self.mode == 'R':
-            return
+            self.fc3_L.weight.requires_grad = True
+            self.fc3_L.bias.requires_grad = True
 
         if self.mode == 'RARC':
             return
@@ -156,11 +177,17 @@ class KFNet(nn.Module):
             # If just training CNN: MSE loss on positions 
             # If also R now: maximize LL
             # End to end: loss is MSE over all timesteps of output observation of timestep - gt_observation 
-        if len(predictions) == 1:
-            print("shape is 1")
-        if self.mode == 'FF' or len(predictions) == 1:
+        if self.mode == 'FF':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
-        elif self.mode == 'R':
+        elif self.mode == 'RC':
+            z = predictions.view(-1, 2)
+            labels = labels.contiguous().view(-1, 2)
+            R_inv = self.R.inverse()
+            error = z - labels
+            error = error.view(error.shape[0], error.shape[1], 1)
+            nll = torch.bmm(torch.transpose(error, 2, 1) @ R_inv, error)
+            loss = torch.mean(nll)
+        elif self.mode == 'R' and len(predictions != 2):
             z = predictions[0].view(-1, 2)
             R = predictions[1].view(-1, 2, 2)
             labels = labels.contiguous().view(-1, 2)
@@ -186,24 +213,22 @@ def binv(x):
     inv = [t.inverse() for t in torch.functional.unbind(x)]
     return torch.functional.stack(inv)
 
-def init_model(args, is_cuda, batch_size, model_type):
-    model = KFNet(model_type, args.batch_size, dynamics_path='./redDot/dynamics.npy')
+def init_model(args, is_cuda, batch_size):
+    model = KFNet(args.batch_size, dynamics_path='./redDot/dynamics.npy')
     if is_cuda:
         model.cuda()
-    params = [param for param in model.parameters() if param.requires_grad]
-    optimizer = optim.Adam(params)
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if is_cuda else {}
-
     train_dataset = RedDotDataset(base_dir='redDot/')
-
-    # Parameters for loading KITTI Dataset
-    #train_dataset = KITTIDataset(frame_selections_file='sequences.csv',
-    #                                           images_dir='dataset/sequences/',
-    #                                           poses_dir='dataset/poses/')
     train_loader = DataLoader(train_dataset, batch_size=batch_size,
                             shuffle=True, **kwargs) ## Maybe: num_workers=4
-    return model, optimizer, train_loader
+    return model, train_loader
+
+def change_mode(model, mode):
+    model.change_mode(mode)
+    params = [param for param in model.parameters() if param.requires_grad]
+    optimizer = optim.Adam(params)
+    return optimizer    
 
 def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_model):
     model.train()
@@ -268,6 +293,28 @@ def visualize_result(gt_traj, est_traj, idx):
     write_traj_on_image(img, est_traj, (0,0,0))
     cv2.imwrite("results/" + str(idx) + ".png", img)
 
+def train_all(args):
+    model, train_loader = init_model(args, args.cuda, args.batch_size)
+
+    if args.load_epoch: 
+        model = torch.load("./epoch/{}".format(args.load_epoch))
+        epoch = args.load_epoch
+    else:
+        epoch = 1
+
+    optimizer = change_mode(model, 'FF')
+    while epoch < 11:
+        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+        test(epoch, model, train_loader, args.cuda)
+        epoch += 1
+    
+    optimizer = change_mode(model, 'R')
+    while epoch < 31:
+        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+        test(epoch, model, train_loader, args.cuda)
+        epoch += 1
+
+
 def main():
     # Training settings 
     parser = argparse.ArgumentParser(description='Deep Visual Odometry using Backprop KF')
@@ -283,8 +330,7 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
-    parser.add_argument('--load-model', action='store_true', default=False, help='turn on model saving')
-    parser.add_argument('--model-path', type=str, help='model to load')
+    parser.add_argument('--load-epoch', type=int, help='load model from epoch #(int)')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
     parser.add_argument('--model-type', type=str, default='FF', help='model type')
     args = parser.parse_args()
@@ -296,16 +342,7 @@ def main():
     if not os.path.exists("results"): 
         os.makedirs("results")
 
-    ## Later, add test function from https://github.com/pytorch/examples/blob/master/mnist/main.py
-    model, optimizer, train_loader = init_model(args, args.cuda, args.batch_size, args.model_type)
-    if args.load_model and args.model_path: model = torch.load(args.model_path)
-    model.change_mode('FF')
-    #for epoch in range(1, 11):
-    #    train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-    #    test(epoch, model, train_loader, args.cuda)
-    model.change_mode('R')
-    for epoch in range(11, 31):
-        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-        test(epoch, model, train_loader, args.cuda)
+    train_all()
+
 
 if __name__ == "__main__": main()
