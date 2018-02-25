@@ -134,8 +134,7 @@ class KFNet(nn.Module):
         L_m[:,1,1] = L[:,2]
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
         R = R.view(self.batch_size, -1, 2, 2)
-        print("EIGENBITCH\n")
-        print(torch.eig(R[0,0])[0][:,0])
+        #print(torch.eig(R[0,0])[0][:,0])
 
         if self.mode == 'R':
             return z, R
@@ -147,19 +146,22 @@ class KFNet(nn.Module):
     	# Return final state estimate 
 
 
-    def loss(self, predictions, labels):
+    def loss(self, predictions, labels, epoch):
         # depending on mode
             # If just training CNN: MSE loss on positions 
             # If also R now: maximize LL
             # End to end: loss is MSE over all timesteps of output observation of timestep - gt_observation 
-        if self.mode == 'FF':
+        if len(predictions) == 1:
+            print("shape is 1")
+        if self.mode == 'FF' or len(predictions) == 1:
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
         elif self.mode == 'R':
             z = predictions[0].view(-1, 2)
             R = predictions[1].view(-1, 2, 2)
             labels = labels.contiguous().view(-1, 2)
             #[batch_size][2] * [batch_size][2][2] * [batch_size][2]
-            R_inv = [t.inverse() for t in torch.functional.unbind(R)]
+            factor = max(0.0,(1.0 - (epoch - 10)/10.0))
+            R_inv = [(t + factor*Variable(torch.eye(2).float(),requires_grad=False).cuda()).inverse() for t in torch.functional.unbind(R)]
             R_inv = torch.functional.stack(R_inv)
             error = z - labels
             error = error.view(error.shape[0], error.shape[1], 1)
@@ -167,9 +169,9 @@ class KFNet(nn.Module):
             # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
             nll_det = 1/2*torch.log(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
             nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
-            print("NLLLLL BITCH\n")
-            print(torch.max(nll))
-            print(torch.min(nll))
+            #print("NLLLLL BITCH\n")
+            #print(torch.max(nll))
+            #print(torch.min(nll))
             #print(torch.max(nll_det))
             #print(torch.min(nll_det))
             #print(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
@@ -216,21 +218,22 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         optimizer.zero_grad()
         output = model(image_data)
 
-        loss = model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1))
+        loss = model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch)
         loss.backward()
         optimizer.step()
 
-        #if batch_idx % log_interval == 0:
-        #    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-        #        epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
-        #        100. * batch_idx / len(train_loader), loss.data[0]))
+        if batch_idx % log_interval == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.data[0]))
     
     if save_model and epoch % 2 == 0:
         torch.save(model, "epoch/" + str(epoch))
 
 def test(epoch, model, loader, is_cuda):
     model.eval()
-    loss = []
+    pixel_loss = []
+    model_loss = []
     for batch_idx, sampled_batch in enumerate(loader):
         image_data = sampled_batch['images']
         gt_poses = sampled_batch['gt']
@@ -240,11 +243,14 @@ def test(epoch, model, loader, is_cuda):
 
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
-        if model.mode != 'FF': output = output[0]
-        #loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1)).data[0])
-        loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
+        model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
+        #print(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1)).data[0], epoch)
+        if model.mode != 'FF': 
+            output = output[0]
+        pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
         visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
-    print('Test Epoch: {} \tLoss: {:.6f}'.format(epoch, np.mean(loss)))
+    print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
+    print('Test Epoch: {} \tModel Loss: {:.6f}'.format(epoch, np.mean(model_loss)))
 
 def init_image():
     img = np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[0], 3))
@@ -275,7 +281,7 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--load-model', action='store_true', default=False, help='turn on model saving')
     parser.add_argument('--model-path', type=str, help='model to load')
@@ -298,7 +304,7 @@ def main():
     #    train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
     #    test(epoch, model, train_loader, args.cuda)
     model.change_mode('R')
-    for epoch in range(11, 21):
+    for epoch in range(11, 31):
         train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
         test(epoch, model, train_loader, args.cuda)
 

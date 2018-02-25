@@ -112,17 +112,17 @@ def run_and_save_disks(runtime_config, number):
     time_sols.append(sols_t)
   imgs = []
   for t in range(runtime_config.steps): 
-    img = draw_sols_onto_image(time_sols[t], cols, rads, "./imgs/" + number + "_" + str(t) + ".png", draw=True)
+    img = draw_sols_onto_image(time_sols[t], cols, rads, runtime_config.dir + "/imgs/" + number + "_" + str(t) + ".png", draw=True)
     imgs.append(img)
 
   imgs_full = np.stack(imgs, axis=0)
-  np.save("./redDot/" + number + "_img.npy", imgs_full)
+  np.save(runtime_config.dir + "/redDot/" + number + "_img.npy", imgs_full)
   ##write out trajectory
   red_output = np.hstack(red_set[0])
-  np.save("./redDot/" + number + "_pos.npy", red_output)
+  np.save(runtime_config.dir + "/redDot/" + number + "_pos.npy", red_output)
   traj_img = init_image()
   write_traj_on_image(traj_img, red_output, (0,0,255))
-  cv2.imwrite('./orig_traj/' + number + '.png', traj_img)
+  cv2.imwrite(runtime_config.dir + '/orig_traj/' + number + '.png', traj_img)
 
 SPRING_CONSTANT = -0.1
 DRAG_CONSTANT = -1.0
@@ -133,6 +133,7 @@ SIG2 = 200.0
 N = 10
 STEPS = 100
 NT = 100
+DIR = "./train"
 class RConfig:
   def __init__(self, args):
     self.spring = SPRING_CONSTANT
@@ -141,12 +142,14 @@ class RConfig:
     self.mu = MU
     self.sig2 = SIG2
     self.steps = STEPS
+    self.dir = DIR
     if 'spring-const' in args: self.spring = args['spring-const']
     if 'drag-const' in args: self.drag = args['drag-const']
     if 'mean-noise' in args: self.mu = args['mean-noise']
     if 'std-noise' in args: self.sig2 = args['std-noise']
     if 'num-disks' in args: self.n = args['num-disks']
     if 'time-steps' in args: self.steps = args['time-steps']
+    if 'base-dir' in args: self.dir = args['base-dir']
 
 def main():
   parser = argparse.ArgumentParser()
@@ -156,18 +159,19 @@ def main():
   parser.add_argument('--std-noise', '-sig2', type=float, help="var of Gaussian noise")
   parser.add_argument('--num-disks', '-n', type=int, help="Number of disks to render")
   parser.add_argument('--time-steps', '-t', type=int, help="Number of steps to sample")
+  parser.add_argument('--base-dir', '-dir', type=str, help="directory for encoding")
   arg_dict = vars(parser.parse_args())
   runtime_config = RConfig(arg_dict)  
 
-  if not os.path.exists("redDot"):
-    os.makedirs("redDot")
-  if not os.path.exists("orig_traj"):
-    os.makedirs("orig_traj")
+  if not os.path.exists(runtime_config.dir + "/redDot"):
+    os.makedirs(runtime_config.dir + "/redDot")
+  if not os.path.exists(runtime_config.dir + "/orig_traj"):
+    os.makedirs(runtime_config.dir + "/orig_traj")
 
-  if not os.path.exists("imgs"): 
-    os.makedirs("imgs")
+  if not os.path.exists(runtime_config.dir + "/imgs"): 
+    os.makedirs(runtime_config.dir + "/imgs")
   else:
-    for files in os.listdir("imgs"): os.remove("imgs/" + files)
+    for files in os.listdir(runtime_config.dir + "/imgs"): os.remove(runtime_config.dir + "/imgs/" + files)
   for i in tqdm(range(NT)): run_and_save_disks(runtime_config, str(i))
 
 if __name__ == "__main__": main()

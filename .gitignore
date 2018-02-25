@@ -5,3 +5,4 @@ epoch*
 __pycache__/
 imgs/
 red.npy
+train
