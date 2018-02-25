@@ -18,6 +18,8 @@ class KFNet(nn.Module):
     """
         Allowable modes include:
             'feed_forward (FF)'
+            'r_const (RC) '
+            'r_against_r_const (RARC)'
             'cnn_with_R_likelihood (R)'
             'backprop_kf (BKF)'
     """
@@ -51,6 +53,9 @@ class KFNet(nn.Module):
             self.fc3_L.bias.requires_grad = False
         
         if self.mode == 'R':
+            return
+
+        if self.mode == 'RARC':
             return
 
         if self.mode == 'BFK':
@@ -159,26 +164,21 @@ class KFNet(nn.Module):
             z = predictions[0].view(-1, 2)
             R = predictions[1].view(-1, 2, 2)
             labels = labels.contiguous().view(-1, 2)
-            #[batch_size][2] * [batch_size][2][2] * [batch_size][2]
             factor = max(0.0,(1.0 - (epoch - 10)/10.0))
             R_inv = [(t + factor*Variable(torch.eye(2).float(),requires_grad=False).cuda()).inverse() for t in torch.functional.unbind(R)]
             R_inv = torch.functional.stack(R_inv)
             error = z - labels
             error = error.view(error.shape[0], error.shape[1], 1)
-            #nll_det = [-torch.log(1/torch.sqrt(t[0][0]*t[1][1]-t[0][1]*t[1][0])) for t in torch.functional.unbind(R)]
             # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
             nll_det = 1/2*torch.log(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
             nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
-            #print("NLLLLL BITCH\n")
-            #print(torch.max(nll))
-            #print(torch.min(nll))
-            #print(torch.max(nll_det))
-            #print(torch.min(nll_det))
-            #print(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
             loss = torch.mean(nll) 
         elif self.mode == 'BKF':
             loss = 0
-        
+        elif self.mode == 'RARC':
+            R = predictions[1].view(-1,2,2)
+            diff = R - self.RC
+            return torch.sqrt((diff**2).sum())
         return loss
 
 

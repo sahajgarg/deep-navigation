@@ -162,6 +162,8 @@ def main():
   parser.add_argument('--base-dir', '-dir', type=str, help="directory for encoding")
   arg_dict = vars(parser.parse_args())
   runtime_config = RConfig(arg_dict)  
+  print(runtime_config)
+  print(arg_dict)
 
   if not os.path.exists(runtime_config.dir + "/redDot"):
     os.makedirs(runtime_config.dir + "/redDot")
