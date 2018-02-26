@@ -20,16 +20,18 @@ class KFNet(nn.Module):
             'feed_forward (FF)'
             'r_const (RC) '
             'r_against_r_const (RARC)'
-            'cnn_with_R_likelihood (R)'
+            'R_t (R)'
             'backprop_kf (BKF)'
     """
     def __init__(self, batch_size, dynamics_path=None):
         super(KFNet, self).__init__()
         self.build_conv()
-        self.R = Variable(torch.eye(2).float(), requires_grad=True)
+        self.mode = None
+        # Note: RC gradients are always on, but RC is only trained in the subgraph with mode RC
+        self.RC = nn.Parameter(torch.eye(2).float().cuda(), requires_grad=True)
         self.batch_size = batch_size
         self.set_grads_for_mode()
-        if dynamics_path:
+        if False:
             dynamics = np.load(dynamics_path)
             self.A = dynamics['A']
             self.B = dynamics['B']
@@ -48,39 +50,32 @@ class KFNet(nn.Module):
 
     def set_grads_for_mode(self):
         if self.mode == 'FF':
-            ## Ignore these gradients when training FF
-            ## Why do you need to do weight and bias separately?
-
+            for param in self.parameters():
+                param.requires_grad = True
             self.fc3_L.weight.requires_grad = False
             self.fc3_L.bias.requires_grad = False
-            self.R.requires_grad = False
-
-            ## Turn on these gradients
+            self.RC.requires_grad = False
 
         if self.mode == 'RC':
             # Maybe I need weight and bias
-            self.conv1.requires_grad = False
-            self.batchnorm1.requires_grad = False
-            self.conv2.requires_grad = False
-            self.batchnorm2.requires_grad = False
-            self.fc1.requires_grad = False
-            self.fc2.requires_grad = False
-            self.fc3_z.requires_grad = False
-            self.fc3_L.requires_grad = False
+            for param in self.parameters():
+                param.requires_grad = False
+            self.RC.requires_grad = True
 
-            ## Start considering these gradiens again: 
-            self.R.requires_grad = True
-
-
-        if self.mode == 'R':
+        if self.mode == 'RARC':
+            for param in self.parameters():
+                param.requires_grad = True #should be False
+            self.RC.requires_grad = False #shouldn't need this line once set to false above
             self.fc3_L.weight.requires_grad = True
             self.fc3_L.bias.requires_grad = True
 
-        if self.mode == 'RARC':
-            return
-
+        if self.mode == 'R':
+            for param in self.parameters():
+                param.requires_grad = True
+            self.RC.requires_grad = False
+        
         if self.mode == 'BFK':
-            return 
+            pass  
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -150,7 +145,7 @@ class KFNet(nn.Module):
         z = self.fc3_z(x)
         z = z.view(self.batch_size, -1, 2)
 
-        if self.mode == 'FF':
+        if self.mode == 'FF' or self.mode == 'RC':
             return z
 
         L = self.fc3_L(x)
@@ -162,7 +157,7 @@ class KFNet(nn.Module):
         R = R.view(self.batch_size, -1, 2, 2)
         #print(torch.eig(R[0,0])[0][:,0])
 
-        if self.mode == 'R':
+        if self.mode == 'R' or self.mode == 'RARC':
             return z, R
 
         if self.mode == 'BKF':
@@ -173,39 +168,59 @@ class KFNet(nn.Module):
 
 
     def loss(self, predictions, labels, epoch):
-        # depending on mode
-            # If just training CNN: MSE loss on positions 
-            # If also R now: maximize LL
-            # End to end: loss is MSE over all timesteps of output observation of timestep - gt_observation 
+        # MSE prediction loss on feed foward model
         if self.mode == 'FF':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
+            #print(loss)
+        
+        # Log Likelihood assuming constant R
         elif self.mode == 'RC':
             z = predictions.view(-1, 2)
             labels = labels.contiguous().view(-1, 2)
-            R_inv = self.R.inverse()
+            RC_inv = self.RC.inverse()
+            #print(self.RC)
             error = z - labels
             error = error.view(error.shape[0], error.shape[1], 1)
-            nll = torch.bmm(torch.transpose(error, 2, 1) @ R_inv, error)
-            loss = torch.mean(nll)
-        elif self.mode == 'R' and len(predictions != 2):
-            z = predictions[0].view(-1, 2)
-            R = predictions[1].view(-1, 2, 2)
-            labels = labels.contiguous().view(-1, 2)
-            factor = max(0.0,(1.0 - (epoch - 10)/10.0))
-            R_inv = [(t + factor*Variable(torch.eye(2).float(),requires_grad=False).cuda()).inverse() for t in torch.functional.unbind(R)]
-            R_inv = torch.functional.stack(R_inv)
-            error = z - labels
-            error = error.view(error.shape[0], error.shape[1], 1)
-            # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
-            nll_det = 1/2*torch.log(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
-            nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
-            loss = torch.mean(nll) 
-        elif self.mode == 'BKF':
-            loss = 0
+            nll_det = 1.0/2.0*torch.log(self.RC[0,0]*self.RC[1,1]-self.RC[0,1]*self.RC[1,0])
+            nll = torch.bmm(torch.transpose(error, 2, 1) @ RC_inv, error)
+            loss = torch.mean(nll) + nll_det
+
+        # Train R_t to output RC
         elif self.mode == 'RARC':
             R = predictions[1].view(-1,2,2)
             diff = R - self.RC
-            return torch.sqrt((diff**2).sum())
+            # MSE; see if you want RMSE
+            return torch.mean((diff**2).sum()) + 2*F.mse_loss(predictions[0].view(-1, 2), labels.contiguous().view(-1, 2))
+
+        
+        # Log likelihood assuming variable R_t
+        elif self.mode == 'R':
+            z = predictions[0].view(-1, 2)
+            R = predictions[1].view(-1, 2, 2)
+            labels = labels.contiguous().view(-1, 2)
+            factor = max(0.0,(1.0 - (epoch - 20)/6.0))
+
+            R_adj = [((1-factor)*t + factor*Variable(torch.eye(2).float(),requires_grad=False).cuda()) for t in torch.functional.unbind(R)]
+            R_adj = torch.functional.stack(R_adj)
+            #print(R_adj)
+            R_inv = binv(R_adj)
+            error = z - labels
+            #error = error.view(error.shape[0], error.shape[1], 1)
+            error = (z - labels).unsqueeze(2)
+            # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
+            nll_det = 1.0/2.0*torch.log(R_adj[:,0,0]*R_adj[:,1,1]-R_adj[:,0,1]*R_adj[:,1,0])
+            nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
+            #print(nll_det)
+            loss = torch.mean(nll) 
+            if(torch.abs(loss).data[0] > 1000):
+                #print(R_adj)
+                print("big error")
+                #print(R_inv)
+                #print(error)
+            #print(torch.mean(nll_det)/torch.mean(nll))
+            #print(loss - 2.0*F.mse_loss(z.view(-1, 2), labels.contiguous().view(-1, 2)))
+        elif self.mode == 'BKF':
+            loss = 0
         return loss
 
 
@@ -224,10 +239,17 @@ def init_model(args, is_cuda, batch_size):
                             shuffle=True, **kwargs) ## Maybe: num_workers=4
     return model, train_loader
 
+
+
 def change_mode(model, mode):
     model.change_mode(mode)
+    print("Optimizing: ", [name for (name, param) in model.named_parameters() if param.requires_grad])
     params = [param for param in model.parameters() if param.requires_grad]
-    optimizer = optim.Adam(params)
+    ## PREVIOUSLY: RARC was 0.01 --> sort of unstable
+    lrs = {'FF': 0.001, 'RC': 0.1, 'RARC': 0.004, 'R': 0.001}
+    lr = lrs[mode] if mode in lrs else 0.001 
+    optimizer = optim.Adam(params, lr=lr)
+
     return optimizer    
 
 def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_model):
@@ -247,15 +269,15 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
         loss.backward()
         optimizer.step()
 
-        if batch_idx % log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.data[0]))
+        #if batch_idx % log_interval == 0:
+        #    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+        #        epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
+        #        100. * batch_idx / len(train_loader), loss.data[0]))
     
     if save_model and epoch % 2 == 0:
         torch.save(model, "epoch/" + str(epoch))
 
-def test(epoch, model, loader, is_cuda):
+def test(epoch, model, loader, is_cuda, is_vis):
     model.eval()
     pixel_loss = []
     model_loss = []
@@ -269,11 +291,10 @@ def test(epoch, model, loader, is_cuda):
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
         model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
-        #print(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1)).data[0], epoch)
         if model.mode != 'FF': 
             output = output[0]
         pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
-        visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
+        if is_vis: visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
     print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
     print('Test Epoch: {} \tModel Loss: {:.6f}'.format(epoch, np.mean(model_loss)))
 
@@ -296,23 +317,21 @@ def visualize_result(gt_traj, est_traj, idx):
 def train_all(args):
     model, train_loader = init_model(args, args.cuda, args.batch_size)
 
-    if args.load_epoch: 
-        model = torch.load("./epoch/{}".format(args.load_epoch))
-        epoch = args.load_epoch
+    if args.load_model: 
+        model = torch.load("./epoch/{}".format(args.load_model))
+        epoch = args.load_model + 1
     else:
         epoch = 1
-
-    optimizer = change_mode(model, 'FF')
-    while epoch < 11:
-        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-        test(epoch, model, train_loader, args.cuda)
-        epoch += 1
     
-    optimizer = change_mode(model, 'R')
-    while epoch < 31:
-        train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-        test(epoch, model, train_loader, args.cuda)
-        epoch += 1
+    modes = [('FF', 20), ('RC', 40), ('RARC', 60), ('R', 80)]
+
+    for mode in modes:
+        print(mode[0])
+        optimizer = change_mode(model, mode[0])
+        while epoch <= mode[1]:
+            train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+            test(epoch, model, train_loader, args.cuda, args.visualize)
+            epoch += 1
 
 
 def main():
@@ -330,8 +349,9 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
-    parser.add_argument('--load-epoch', type=int, help='load model from epoch #(int)')
+    parser.add_argument('--load-model', type=int, help='load model from epoch #(int)')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
+    parser.add_argument('--visualize', action='store_true', default=False, help='visualize model (default False)')
     parser.add_argument('--model-type', type=str, default='FF', help='model type')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -342,7 +362,7 @@ def main():
     if not os.path.exists("results"): 
         os.makedirs("results")
 
-    train_all()
+    train_all(args)
 
 
 if __name__ == "__main__": main()

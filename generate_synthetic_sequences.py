@@ -136,20 +136,13 @@ NT = 100
 DIR = "./train"
 class RConfig:
   def __init__(self, args):
-    self.spring = SPRING_CONSTANT
-    self.drag = DRAG_CONSTANT
-    self.n = N
-    self.mu = MU
-    self.sig2 = SIG2
-    self.steps = STEPS
-    self.dir = DIR
-    if 'spring-const' in args: self.spring = args['spring-const']
-    if 'drag-const' in args: self.drag = args['drag-const']
-    if 'mean-noise' in args: self.mu = args['mean-noise']
-    if 'std-noise' in args: self.sig2 = args['std-noise']
-    if 'num-disks' in args: self.n = args['num-disks']
-    if 'time-steps' in args: self.steps = args['time-steps']
-    if 'base-dir' in args: self.dir = args['base-dir']
+    self.spring = args['spring_const'] if args['spring_const'] is not None else SPRING_CONSTANT
+    self.drag = args['drag_const'] if args['spring_const'] is not None else DRAG_CONSTANT
+    self.mu = args['mean_noise'] if args['mean_noise'] is not None else MU
+    self.sig2 = args['std_noise'] if args['std_noise'] is not None else SIG2
+    self.n = args['num_disks'] if args['num_disks'] is not None else N
+    self.steps = args['time_steps'] if args['time_steps'] is not None else STEPS
+    self.dir = args['base_dir'] if args['base_dir'] is not None else DIR
 
 def main():
   parser = argparse.ArgumentParser()
