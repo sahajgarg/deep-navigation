@@ -5,6 +5,7 @@ import argparse
 import os
 from tqdm import tqdm
 import random
+import math
 ##dynamics of this system are of the form
 ## x'' = -kx + ax'
 ##
@@ -144,6 +145,7 @@ class RConfig:
     self.steps = args['time_steps'] if args['time_steps'] is not None else STEPS
     self.dir = args['base_dir'] if args['base_dir'] is not None else DIR
 
+import pickle
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument('--spring-const', '-k', type=float, help="Spring constant (default -5)")
@@ -157,6 +159,20 @@ def main():
   runtime_config = RConfig(arg_dict)  
   print(runtime_config)
   print(arg_dict)
+  A = generate_expA(runtime_config)
+  B = np.zeros((4,4))
+  B[3,3] = math.sqrt(SIG2)
+  B[2,2] = math.sqrt(SIG2)
+  C = np.zeros((4,4))
+  C[0,0] = 1.0
+  C[1,1] = 1.0
+  d = {}
+  d['A'] = A
+  d['B'] = B
+  d['C'] = C
+  with open('./train/dynamics.pkl', 'wb') as f:
+      pickle.dump(d, f)
+  return
 
   if not os.path.exists(runtime_config.dir + "/redDot"):
     os.makedirs(runtime_config.dir + "/redDot")

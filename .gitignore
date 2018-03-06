@@ -1,4 +1,5 @@
 dataset
+KITTI_dataset/
 results/
 redDot/
 epoch*
@@ -6,3 +7,6 @@ __pycache__/
 imgs/
 red.npy
 train
+val
+test.py
+test2.py

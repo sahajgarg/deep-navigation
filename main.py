@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import os
 import numpy as np
 import cv2
+import pickle
 from tqdm import tqdm
 
 IMAGE_SIZE = (128, 128)
@@ -23,23 +24,25 @@ class KFNet(nn.Module):
             'R_t (R)'
             'backprop_kf (BKF)'
     """
-    def __init__(self, batch_size, dynamics_path=None):
+    def __init__(self, batch_size, dynamics_path):
         super(KFNet, self).__init__()
         self.build_conv()
+        self.build_KF()
         self.mode = None
-        # Note: RC gradients are always on, but RC is only trained in the subgraph with mode RC
         self.RC = nn.Parameter(torch.eye(2).float().cuda(), requires_grad=True)
         self.batch_size = batch_size
         self.set_grads_for_mode()
-        if False:
-            dynamics = np.load(dynamics_path)
-            self.A = dynamics['A']
-            self.B = dynamics['B']
-            self.C = dynamics['C']
-            ## TURN ALL OF THESE INTO HUGE
-            #self.sequence_len = dynamics['sequence_len']
+        self.fclr = nn.Linear(128*128*3, 2)
 
-    # how do I define a function not on self?
+        with open(dynamics_path, 'rb') as dyn_file:
+            dynamics = pickle.load(dyn_file)
+            self.A = Variable(torch.FloatTensor(dynamics['A']))
+            self.AT = Variable(torch.FloatTensor(dynamics['A']))
+            self.B = Variable(torch.FloatTensor(dynamics['B']))
+            self.BT = Variable(torch.FloatTensor(dynamics['B']))
+            self.C = Variable(torch.FloatTensor(dynamics['C']))
+            self.CT = Variable(torch.FloatTensor(dynamics['C']))
+
     # Does using this as a self mean that each norm layer will be identical//is that an issue
     def resp_norm(self, input):
         pass
@@ -49,6 +52,12 @@ class KFNet(nn.Module):
         self.set_grads_for_mode()
 
     def set_grads_for_mode(self):
+        if self.mode == 'LR':
+            for param in self.parameters():
+                param.requires_grad = False
+            self.fclr.weight.requires_grad = True
+            self.fclr.bias.requires_grad = True
+        
         if self.mode == 'FF':
             for param in self.parameters():
                 param.requires_grad = True
@@ -57,7 +66,6 @@ class KFNet(nn.Module):
             self.RC.requires_grad = False
 
         if self.mode == 'RC':
-            # Maybe I need weight and bias
             for param in self.parameters():
                 param.requires_grad = False
             self.RC.requires_grad = True
@@ -75,7 +83,10 @@ class KFNet(nn.Module):
             self.RC.requires_grad = False
         
         if self.mode == 'BFK':
-            pass  
+            for param in self.parameters():
+                param.requires_grad = True
+            self.RC.requires_grad = False
+
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -89,39 +100,38 @@ class KFNet(nn.Module):
         self.fc3_z = nn.Linear(32, 2)
         self.fc3_L = nn.Linear(32, 3)
 
+    def build_KF(self):
+        self.Q = nn.Parameter(torch.randn(4, 4).float().cuda(), requires_grad=True)
+    
     def run_KF(self, z, R):
         outputs = []
-        # 4 should be z.size(2)
-        h = Variable(torch.zeros(z.size(0), z.size(1), 4).double(), requires_grad=False)
-        hprime = Variable(torch.zeros(z.size(0), z.size(1), 4).double(), requires_grad=False)
+        h = Variable(torch.zeros(z.size(0), z.size(1), 4).float(), requires_grad=False)
+        hprime = Variable(torch.zeros(z.size(0), z.size(1), 4).float(), requires_grad=False)
 
-        # s is covariance matrix
-        s = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).double(), requires_grad=False)
-        sprime = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).double(), requires_grad=False)
+   	# s is covariance matrix
+        s = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float(), requires_grad=False)
+        sprime = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float(), requires_grad=False)
 
-        # Add learned Q variable
-        Q = Variable(4,4, requires_grad=True)
-        ## TODO: CUDA?
+    	# K_t for a single time step; overwrite it each time
+        K_t = Variable(torch.zeros(z.size(0), 4, 4).float(), requires_grad=False)
+        I = Variable(torch.eye(4).float())
 
-        ###TODO:: INITIALIZE ALL THE ZEROTH TIMES
+        # Initialize mean and covariance for time step 0
+        h[:,0,0:2] = z[:,0,:]
+        s[:,0,0:2,0:2] = R[:,0,:,:]
+        s[:,0,2:4,2:4] = torch.stack([torch.eye(2) for i in range(z.size(0))]) 
+        for t in range(z.size(1)-1):
+            print(self.A)
+            print(Variable(torch.Tensor(self.A)))
+            hprime[:,t+1,:] = torch.matmul(self.A, h[:,t,:].unsqueeze(2)).squeeze(2) ## batch_size x 4 * 4 x 4 = batch_size x 4 
+            sprime[:,t+1,:,:] = torch.matmul(self.A, s[:,t,:,:] @ self.AT) + self.B @ self.Q @ self.BT
+            K_t = torch.matmul(sprime[:,t+1,:,:] @ self.CT, binv(torch.matmul(self.C, sprime[:,t+1,:,:] @ self.CT) + R[:,t+1,:,:]))
+            alpha = z[:,t+1,:] - torch.matmul(self.C, hprime[:,t+1,:].unsqueeze(2)).squeeze(2) 
+            h[:,t+1,:] = hprime[:,t+1,:] + torch.matmul(K_t, alpha.unsqueeze(2)).squeeze(2) 
+            s[:,t+1,:,:] = torch.matmul((I - K_t @ self.C), sprime[:,t+1,:,:])
+            
+        return h,s
 
-        # K_t for a single time step; overwrite it each time
-        K_t = Variable(torch.zeros(x.size(0), 4, 4).double(), requires_grad=False)
-        ## NEED A LARGE ASS IDENTITY MATRIX
-        I = None
-
-        for t, z_t, R_t in enumerate(zip(z, R).chunk(z.size(1), dim = 1)):
-            ## PRobably need to reduce dims on the h thing *********DO WE NEED TO SQUEEEZZZZEEEEEE******
-            hprime[:,t+1,:] = torch.bmm(self.A, h[:,t,:]) ## 100 x 4
-            ## ISSUE: We want the last thing to add to every single batch element but it probably doesn't
-            sprime[:,t+1,:,:] = torch.bmm(self.A, torch.bmm(s[t], self.A.T)) + self.B @ Q @ self.B.T
-## FIx the *
-            K_t = torch.bmm(sprime[t+1], torch.bmm(self.C.T, binv(torch.bmm(C.T, torch.bmm(sprime[t+1], C.T)) + R[t+1])))
-            h[:,t+1,:] = hprime[:,t+1,:] + torch.bmm(K_t, z[:,t+1,:] - torch.bmm(C, hprime[:,t+1,:])) 
-            # BATCH * 4 * 4 // 
-            s[:,t+1,:,:] = torch.bmm((I - torch.bmm(K_t, C)), sprime[:,t+1,:,:])
-
-        return h
         # Consider single train example first, then batch
         # for each frame in sequence:
             # h'[t+1] = Ah[t]
@@ -133,6 +143,12 @@ class KFNet(nn.Module):
 
 
     def forward(self, x):
+        if self.mode == 'LR':
+            x = x.view(-1, IMAGE_SIZE[0] * IMAGE_SIZE[0] * 3)
+            x = self.fclr(x)
+            x = x.view(self.batch_size, -1, 2)
+            return x
+
         x = x.view(-1, IMAGE_SIZE[0], IMAGE_SIZE[0], 3)
         x = x.permute(0,3,1,2)
         x = F.max_pool2d(F.relu(self.conv1(x)), 2, stride=2)
@@ -155,21 +171,17 @@ class KFNet(nn.Module):
         L_m[:,1,1] = L[:,2]
         R = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
         R = R.view(self.batch_size, -1, 2, 2)
-        #print(torch.eig(R[0,0])[0][:,0])
 
         if self.mode == 'R' or self.mode == 'RARC':
             return z, R
 
         if self.mode == 'BKF':
-            return run_KF(z, R)
-    	# Pass entire batch of images through convolutional net
-    	# Apply recurrence of KF
-    	# Return final state estimate 
+            return self.run_KF(z, R)
 
 
     def loss(self, predictions, labels, epoch):
         # MSE prediction loss on feed foward model
-        if self.mode == 'FF':
+        if self.mode == 'FF' or self.mode == 'LR':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
             #print(loss)
         
@@ -190,7 +202,7 @@ class KFNet(nn.Module):
             R = predictions[1].view(-1,2,2)
             diff = R - self.RC
             # MSE; see if you want RMSE
-            return torch.mean((diff**2).sum()) + 2*F.mse_loss(predictions[0].view(-1, 2), labels.contiguous().view(-1, 2))
+            return torch.mean((diff**2).sum()) + 3*F.mse_loss(predictions[0].view(-1, 2), labels.contiguous().view(-1, 2))
 
         
         # Log likelihood assuming variable R_t
@@ -202,25 +214,19 @@ class KFNet(nn.Module):
 
             R_adj = [((1-factor)*t + factor*Variable(torch.eye(2).float(),requires_grad=False).cuda()) for t in torch.functional.unbind(R)]
             R_adj = torch.functional.stack(R_adj)
-            #print(R_adj)
             R_inv = binv(R_adj)
             error = z - labels
-            #error = error.view(error.shape[0], error.shape[1], 1)
             error = (z - labels).unsqueeze(2)
-            # Negative log likelihood of determinant term; power of -1/2 comes out front and mults by -1 in the nll
             nll_det = 1.0/2.0*torch.log(R_adj[:,0,0]*R_adj[:,1,1]-R_adj[:,0,1]*R_adj[:,1,0])
             nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
-            #print(nll_det)
             loss = torch.mean(nll) 
             if(torch.abs(loss).data[0] > 1000):
-                #print(R_adj)
                 print("big error")
-                #print(R_inv)
-                #print(error)
-            #print(torch.mean(nll_det)/torch.mean(nll))
-            #print(loss - 2.0*F.mse_loss(z.view(-1, 2), labels.contiguous().view(-1, 2)))
         elif self.mode == 'BKF':
-            loss = 0
+            h = predictions[0].view(-1, 4)
+            z = h[:,0:2]
+            loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
+
         return loss
 
 
@@ -229,25 +235,25 @@ def binv(x):
     return torch.functional.stack(inv)
 
 def init_model(args, is_cuda, batch_size):
-    model = KFNet(args.batch_size, dynamics_path='./redDot/dynamics.npy')
+    model = KFNet(args.batch_size, "./train/dynamics.pkl")
     if is_cuda:
         model.cuda()
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if is_cuda else {}
-    train_dataset = RedDotDataset(base_dir='redDot/')
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                            shuffle=True, **kwargs) ## Maybe: num_workers=4
-    return model, train_loader
+    train_dataset = RedDotDataset(base_dir='./train/redDot/')
+    val_dataset = RedDotDataset(base_dir='./val/redDot/')
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs) ## Maybe: num_workers=4
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, **kwargs) ## Maybe: num_workers=4
 
-
+    return model, train_loader, val_loader
 
 def change_mode(model, mode):
     model.change_mode(mode)
     print("Optimizing: ", [name for (name, param) in model.named_parameters() if param.requires_grad])
     params = [param for param in model.parameters() if param.requires_grad]
     ## PREVIOUSLY: RARC was 0.01 --> sort of unstable
-    lrs = {'FF': 0.001, 'RC': 0.1, 'RARC': 0.004, 'R': 0.001}
-    lr = lrs[mode] if mode in lrs else 0.001 
+    lrs = {'FF': 0.001, 'RC': 0.1, 'RARC': 0.004, 'R': 0.0001}
+    lr = lrs[mode] if mode in lrs else 0.001
     optimizer = optim.Adam(params, lr=lr)
 
     return optimizer    
@@ -315,7 +321,7 @@ def visualize_result(gt_traj, est_traj, idx):
     cv2.imwrite("results/" + str(idx) + ".png", img)
 
 def train_all(args):
-    model, train_loader = init_model(args, args.cuda, args.batch_size)
+    model, train_loader, val_loader = init_model(args, args.cuda, args.batch_size)
 
     if args.load_model: 
         model = torch.load("./epoch/{}".format(args.load_model))
@@ -323,14 +329,23 @@ def train_all(args):
     else:
         epoch = 1
     
-    modes = [('FF', 20), ('RC', 40), ('RARC', 60), ('R', 80)]
-
+    mode_lengths = [('FF', 10), ('RC', 20), ('RARC', 40), ('R', 30), ('BKF', 40)]
+    modes = []
+    total=0
+    for mode in mode_lengths:
+        total += mode[1]
+        modes.append((mode[0], total))
+    
     for mode in modes:
         print(mode[0])
         optimizer = change_mode(model, mode[0])
         while epoch <= mode[1]:
             train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-            test(epoch, model, train_loader, args.cuda, args.visualize)
+            test(epoch, model, val_loader, args.cuda, args.visualize)
+            print_train = True
+            if print_train:
+                print("Numbers on training set")
+                test(epoch, model, train_loader, args.cuda, args.visualize)
             epoch += 1
 
 
