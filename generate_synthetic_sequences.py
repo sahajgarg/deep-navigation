@@ -163,7 +163,7 @@ def main():
   B = np.zeros((4,4))
   B[3,3] = math.sqrt(SIG2)
   B[2,2] = math.sqrt(SIG2)
-  C = np.zeros((4,4))
+  C = np.zeros((2,4))
   C[0,0] = 1.0
   C[1,1] = 1.0
   d = {}

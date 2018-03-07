@@ -105,21 +105,43 @@ class KFNet(nn.Module):
     
     def run_KF(self, z, R):
         outputs = []
-        h = Variable(torch.zeros(z.size(0), z.size(1), 4).float(), requires_grad=False)
-        hprime = Variable(torch.zeros(z.size(0), z.size(1), 4).float(), requires_grad=False)
+        
+        h = Variable(torch.zeros(z.size(0), z.size(1), 4).float().cuda(), requires_grad=False)
+        hprime = Variable(torch.zeros(z.size(0), z.size(1), 4).float().cuda(), requires_grad=False)
 
    	# s is covariance matrix
-        s = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float(), requires_grad=False)
-        sprime = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float(), requires_grad=False)
+        s = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float().cuda(), requires_grad=False)
+        sprime = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float().cuda(), requires_grad=False)
 
-    	# K_t for a single time step; overwrite it each time
-        K_t = Variable(torch.zeros(z.size(0), 4, 4).float(), requires_grad=False)
-        I = Variable(torch.eye(4).float())
+        K_t = Variable(torch.zeros(z.size(0), z.size(1), 4, 2).float().cuda(), requires_grad=False)
+        #print(K_t)
+
+        I = Variable(torch.eye(4).float().cuda())
 
         # Initialize mean and covariance for time step 0
         h[:,0,0:2] = z[:,0,:]
         s[:,0,0:2,0:2] = R[:,0,:,:]
-        s[:,0,2:4,2:4] = torch.stack([torch.eye(2) for i in range(z.size(0))]) 
+        s[:,0,2:4,2:4] = torch.stack([torch.eye(2).cuda() for i in range(z.size(0))]) 
+        #print(s[:,0,:,:])
+        #print(self.C)
+        
+        A = Variable(torch.Tensor(self.A).cuda())
+        AT = Variable(torch.Tensor(self.AT).cuda())
+        B = Variable(torch.Tensor(self.B).cuda())
+        BT = Variable(torch.Tensor(self.BT).cuda())
+        C = Variable(torch.Tensor(self.C[0:2]).cuda())
+        CT = Variable(torch.Tensor(self.CT[:,0:2]).cuda())
+
+        for t in range(z.size(1)-1):
+            hprime[:,t+1,:] = torch.matmul(A, h[:,t,:].unsqueeze(2)).squeeze(2) ## batch_size x 4 * 4 x 4 = batch_size x 4 
+            sprime[:,t+1,:,:] = torch.matmul(A, s[:,t,:,:] @ AT) + B @ self.Q @ BT
+            K_t[:,t+1,:,:] = torch.matmul(sprime[:,t+1,:,:] @ CT, binv(torch.matmul(C, sprime[:,t+1,:,:] @ CT) + R[:,t+1,:,:]))
+            #print(K_t[:,t+1,:,:])
+            alpha = z[:,t+1,:] - torch.matmul(C, hprime[:,t+1,:].unsqueeze(2)).squeeze(2) 
+            h[:,t+1,:] = hprime[:,t+1,:] + torch.matmul(K_t[:,t+1,:,:], alpha.unsqueeze(2)).squeeze(2) 
+            s[:,t+1,:,:] = torch.matmul((I - K_t[:,t+1,:,:] @ C), sprime[:,t+1,:,:])
+
+        """ CORRECT CODE: 
         for t in range(z.size(1)-1):
             print(self.A)
             print(Variable(torch.Tensor(self.A)))
@@ -129,7 +151,8 @@ class KFNet(nn.Module):
             alpha = z[:,t+1,:] - torch.matmul(self.C, hprime[:,t+1,:].unsqueeze(2)).squeeze(2) 
             h[:,t+1,:] = hprime[:,t+1,:] + torch.matmul(K_t, alpha.unsqueeze(2)).squeeze(2) 
             s[:,t+1,:,:] = torch.matmul((I - K_t @ self.C), sprime[:,t+1,:,:])
-            
+        """
+
         return h,s
 
         # Consider single train example first, then batch
@@ -324,7 +347,7 @@ def train_all(args):
     model, train_loader, val_loader = init_model(args, args.cuda, args.batch_size)
 
     if args.load_model: 
-        model = torch.load("./epoch/{}".format(args.load_model))
+        model = torch.load(args.load_dir + "{}".format(args.load_model))
         epoch = args.load_model + 1
     else:
         epoch = 1
@@ -365,6 +388,7 @@ def main():
     parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--load-model', type=int, help='load model from epoch #(int)')
+    parser.add_argument('--load-dir', type=str, default="./epoch", help='directory to load model (default ./epoch)')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
     parser.add_argument('--visualize', action='store_true', default=False, help='visualize model (default False)')
     parser.add_argument('--model-type', type=str, default='FF', help='model type')
