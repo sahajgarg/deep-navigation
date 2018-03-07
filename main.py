@@ -23,6 +23,7 @@ class KFNet(nn.Module):
             'r_against_r_const (RARC)'
             'R_t (R)'
             'backprop_kf (BKF)'
+            'LSTM w/backprop KF (LSTMBKF)'
     """
     def __init__(self, batch_size, dynamics_path):
         super(KFNet, self).__init__()
@@ -87,6 +88,11 @@ class KFNet(nn.Module):
                 param.requires_grad = True
             self.RC.requires_grad = False
 
+        if self.mode == 'LSTMBFK':
+            for param in self.parameters():
+                param.requires_grad = True
+            self.RC.requires_grad = False
+
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -102,7 +108,16 @@ class KFNet(nn.Module):
 
     def build_KF(self):
         self.Q = nn.Parameter(torch.randn(4, 4).float().cuda(), requires_grad=True)
-    
+ 
+	def build_LSTM(self):
+		self.LSTM = nn.LSTM(self.seq_len, self.hidden_size, batch_first=True)
+	
+	##input is z and R flattened
+    ## MB_size x timesteps x 2
+	def run_LSTM(self, input_flat):
+        out, hidden = lstm(inputs_flat)
+		return out
+       
     def run_KF(self, z, R):
         outputs = []
         
@@ -187,6 +202,20 @@ class KFNet(nn.Module):
 
         if self.mode == 'BKF':
             return self.run_KF(z, R)
+		
+		if self.mode == 'LSTMBKF':
+			inp = torch.concat([z,L],2)
+			outp = self.run_LSTM(inp)
+			z_new = outp[:,:,0:2]
+			L_new = outp[:,:,2::]
+        	L_m = Variable(torch.FloatTensor(L_new.shape[0], 2, 2).zero_()).cuda()
+        	L_m[:,0,0] = L[:,0]
+        	L_m[:,1,0] = L[:,1]
+        	L_m[:,1,1] = L[:,2]
+        	R_new = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
+        	R_new = R_new.view(self.batch_size, -1, 2, 2)
+			return self.run_KF(z_new, R_new)
+
 
 
     def loss(self, predictions, labels, epoch):
