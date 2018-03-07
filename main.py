@@ -37,12 +37,12 @@ class KFNet(nn.Module):
 
         with open(dynamics_path, 'rb') as dyn_file:
             dynamics = pickle.load(dyn_file)
-            self.A = Variable(torch.FloatTensor(dynamics['A']))
-            self.AT = Variable(torch.FloatTensor(dynamics['A']))
-            self.B = Variable(torch.FloatTensor(dynamics['B']))
-            self.BT = Variable(torch.FloatTensor(dynamics['B']))
-            self.C = Variable(torch.FloatTensor(dynamics['C']))
-            self.CT = Variable(torch.FloatTensor(dynamics['C']))
+            self.A = Variable(torch.Tensor(dynamics['A']).cuda())
+            self.AT = Variable(torch.Tensor(dynamics['A'].T).cuda())
+            self.B = Variable(torch.Tensor(dynamics['B']).cuda())
+            self.BT = Variable(torch.Tensor(dynamics['B'].T).cuda())
+            self.C = Variable(torch.Tensor(dynamics['C']).cuda())
+            self.CT = Variable(torch.Tensor(dynamics['C'].T).cuda())
 
     # Does using this as a self mean that each norm layer will be identical//is that an issue
     def resp_norm(self, input):
@@ -121,63 +121,50 @@ class KFNet(nn.Module):
     def run_KF(self, z, R):
         outputs = []
         
-        h = Variable(torch.zeros(z.size(0), z.size(1), 4).float().cuda(), requires_grad=False)
-        hprime = Variable(torch.zeros(z.size(0), z.size(1), 4).float().cuda(), requires_grad=False)
+        h = Variable(torch.zeros(z.size(0), 4, 1).float().cuda(), requires_grad=False)
+        hprime = Variable(torch.zeros(z.size(0), 4, 1).float().cuda(), requires_grad=False)
 
    	# s is covariance matrix
-        s = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float().cuda(), requires_grad=False)
-        sprime = Variable(torch.zeros(z.size(0), z.size(1), 4, 4).float().cuda(), requires_grad=False)
+        s = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
+        sprime = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
 
-        K_t = Variable(torch.zeros(z.size(0), z.size(1), 4, 2).float().cuda(), requires_grad=False)
+        K_t = Variable(torch.zeros(z.size(0), 4, 2).float().cuda(), requires_grad=False)
         #print(K_t)
 
         I = Variable(torch.eye(4).float().cuda())
 
         # Initialize mean and covariance for time step 0
-        h[:,0,0:2] = z[:,0,:]
-        s[:,0,0:2,0:2] = R[:,0,:,:]
-        s[:,0,2:4,2:4] = torch.stack([torch.eye(2).cuda() for i in range(z.size(0))]) 
+        h[:,0:2,:] = z[:,0,:]
+        s[:,0:2,0:2] = R[:,0,:,:]
+        s[:,2:4,2:4] = torch.stack([Variable(torch.eye(2).cuda(), requires_grad=False) for i in range(z.size(0))]) 
         #print(s[:,0,:,:])
         #print(self.C)
         
-        A = Variable(torch.Tensor(self.A).cuda())
-        AT = Variable(torch.Tensor(self.AT).cuda())
-        B = Variable(torch.Tensor(self.B).cuda())
-        BT = Variable(torch.Tensor(self.BT).cuda())
-        C = Variable(torch.Tensor(self.C[0:2]).cuda())
-        CT = Variable(torch.Tensor(self.CT[:,0:2]).cuda())
+        #A = Variable(torch.Tensor(self.A).cuda())
+        #AT = Variable(torch.Tensor(self.AT).cuda())
+        #B = Variable(torch.Tensor(self.B).cuda())
+        #BT = Variable(torch.Tensor(self.BT).cuda())
+        #C = Variable(torch.Tensor(self.C[0:2]).cuda())
+        #CT = Variable(torch.Tensor(self.CT[:,0:2]).cuda())
+        outputs += [h.squeeze(2)]
 
-        for t in range(z.size(1)-1):
-            hprime[:,t+1,:] = torch.matmul(A, h[:,t,:].unsqueeze(2)).squeeze(2) ## batch_size x 4 * 4 x 4 = batch_size x 4 
-            sprime[:,t+1,:,:] = torch.matmul(A, s[:,t,:,:] @ AT) + B @ self.Q @ BT
-            K_t[:,t+1,:,:] = torch.matmul(sprime[:,t+1,:,:] @ CT, binv(torch.matmul(C, sprime[:,t+1,:,:] @ CT) + R[:,t+1,:,:]))
-            #print(K_t[:,t+1,:,:])
-            alpha = z[:,t+1,:] - torch.matmul(C, hprime[:,t+1,:].unsqueeze(2)).squeeze(2) 
-            h[:,t+1,:] = hprime[:,t+1,:] + torch.matmul(K_t[:,t+1,:,:], alpha.unsqueeze(2)).squeeze(2) 
-            s[:,t+1,:,:] = torch.matmul((I - K_t[:,t+1,:,:] @ C), sprime[:,t+1,:,:])
-
-        """ CORRECT CODE: 
-        for t in range(z.size(1)-1):
-            print(self.A)
-            print(Variable(torch.Tensor(self.A)))
-            hprime[:,t+1,:] = torch.matmul(self.A, h[:,t,:].unsqueeze(2)).squeeze(2) ## batch_size x 4 * 4 x 4 = batch_size x 4 
-            sprime[:,t+1,:,:] = torch.matmul(self.A, s[:,t,:,:] @ self.AT) + self.B @ self.Q @ self.BT
-            K_t = torch.matmul(sprime[:,t+1,:,:] @ self.CT, binv(torch.matmul(self.C, sprime[:,t+1,:,:] @ self.CT) + R[:,t+1,:,:]))
-            alpha = z[:,t+1,:] - torch.matmul(self.C, hprime[:,t+1,:].unsqueeze(2)).squeeze(2) 
-            h[:,t+1,:] = hprime[:,t+1,:] + torch.matmul(K_t, alpha.unsqueeze(2)).squeeze(2) 
-            s[:,t+1,:,:] = torch.matmul((I - K_t @ self.C), sprime[:,t+1,:,:])
-        """
-
-        return h,s
-
-        # Consider single train example first, then batch
         # for each frame in sequence:
             # h'[t+1] = Ah[t]
             # Sig'[t+1] = ASig_x[t]A.T + B_WQB_W.T
             # K[t+1] = Sig'[t+1]CT(CSig'[t+1]CT+R[t+1])^-1
             # set h[t+1] = h'[t+1] + K[t+1](z[t+1] - Ch'[t+1])
             # Sig[t+1] = (I - K[t+1]C)Sig'[t+1]
-
+        for t in range(z.size(1)-1):
+            hprime = torch.matmul(self.A, h)
+            sprime = torch.matmul(self.A, s @ self.AT) + self.B @ self.Q @ self.BT
+            K_t = torch.matmul(sprime @ self.CT, binv(torch.matmul(self.C, sprime @ self.CT) + R[:,t+1,:,:]))
+            alpha = z[:,t+1,:].unsqueeze(2) - torch.matmul(self.C, hprime)
+            h = hprime + torch.matmul(K_t, alpha)
+            s = torch.matmul((I - K_t @ self.C), sprime)
+            outputs += [h.squeeze(2)]
+        
+        outputs = torch.stack(outputs, 1)
+        return outputs 
 
 
     def forward(self, x):
@@ -274,9 +261,12 @@ class KFNet(nn.Module):
             loss = torch.mean(nll) 
             if(torch.abs(loss).data[0] > 1000):
                 print("big error")
+
         elif self.mode == 'BKF':
             h = predictions[0].view(-1, 4)
             z = h[:,0:2]
+            #print(z.shape)
+            #print(z-labels.contiguous().view(-1,2))
             loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
 
         return loss
@@ -349,8 +339,10 @@ def test(epoch, model, loader, is_cuda, is_vis):
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
         model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
-        if model.mode != 'FF': 
+        if model.mode == 'R' or model.mode == 'RARC' or model.mode == 'RC': 
             output = output[0]
+        if model.mode == 'BKF':
+            output = output[:,:,0:2].contiguous()
         pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
         if is_vis: visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
     print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
@@ -381,7 +373,8 @@ def train_all(args):
     else:
         epoch = 1
     
-    mode_lengths = [('FF', 10), ('RC', 20), ('RARC', 40), ('R', 30), ('BKF', 40)]
+    #mode_lengths = [('FF', 10), ('RC', 20), ('RARC', 40), ('R', 30), ('BKF', 40)]
+    mode_lengths = [('BKF', 40)]
     modes = []
     total=0
     for mode in mode_lengths:
