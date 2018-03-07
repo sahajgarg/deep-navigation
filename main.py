@@ -310,8 +310,10 @@ def test(epoch, model, loader, is_cuda, is_vis):
         image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         output = model(image_data)
         model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
-        if model.mode != 'FF': 
+        if model.mode == 'R' or model.mode == 'RARC' or model.mode == 'RC': 
             output = output[0]
+        if model.mode == 'BKF':
+            output = output[:,:,0:2].contiguous()
         pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
         if is_vis: visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
     print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
