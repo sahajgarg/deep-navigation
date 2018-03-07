@@ -240,6 +240,10 @@ class KFNet(nn.Module):
             #print(z-labels.contiguous().view(-1,2))
             loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
 
+        elif self.mode == 'LSTMBKF':
+            h = predictions[0].view(-1, 4)
+            z = h[:,0:2]
+            loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
         return loss
 
 
@@ -345,7 +349,7 @@ def train_all(args):
         epoch = 1
     
     #mode_lengths = [('FF', 10), ('RC', 20), ('RARC', 40), ('R', 30), ('BKF', 40)]
-    mode_lengths = [('BKF', 40)]
+    mode_lengths = [('LSTMBKF', 60)]
     modes = []
     total=0
     for mode in mode_lengths:
