@@ -24,6 +24,7 @@ class KFNet(nn.Module):
             'R_t (R)'
             'backprop_kf (BKF)'
             'LSTM w/backprop KF (LSTMBKF)'
+            'LSTMBKFE2E'
     """
     def __init__(self, batch_size, dynamics_path):
         super(KFNet, self).__init__()
@@ -104,13 +105,17 @@ class KFNet(nn.Module):
                     block_size = int(param.shape[0] / num_blocks)
                     tmp_xav = torch.Tensor(param.shape).float().cuda()
                     torch.nn.init.xavier_normal(tmp_xav)
-                    tmp2 = torch.eye(block_size).float().cuda()
-                    for i in range(num_blocks):
-                        tmp_xav[i*block_size : (i+1)*block_size,:] += tmp2
+                    #tmp2 = torch.eye(block_size).float().cuda()
+                    #for i in range(num_blocks):
+                    #    tmp_xav[i*block_size : (i+1)*block_size,:] += tmp2
                     param.data = tmp_xav
                 else: continue
             self.RC.requires_grad = False
-
+        
+        if self.mode == 'LSTMBKFE2E':
+            for param in self.parameters():
+                param.requires_grad = True
+            self.RC.requires_grad = False
 
     def build_conv(self):
         # (n - k)/s + 1
@@ -206,11 +211,11 @@ class KFNet(nn.Module):
         if self.mode == 'BKF':
             return self.run_KF(z, R)
 		
-        if self.mode == 'LSTMBKF':
+        if self.mode == 'LSTMBKF' or self.mode == 'LSTMBKFE2E':
             L = L.view(1, L.shape[0], L.shape[1])
             inp = torch.cat([z,L],2)
             outp = self.run_LSTM(inp)
-            print(outp)
+            outp = 64*outp
             z_new = outp[:,:,0:2]
             L_new = outp[:,:,2::]
             L_new = L_new.squeeze()
@@ -275,7 +280,7 @@ class KFNet(nn.Module):
             #print(z-labels.contiguous().view(-1,2))
             loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
 
-        elif self.mode == 'LSTMBKF':
+        elif self.mode == 'LSTMBKF' or self.mode == 'LSTMBKFE2E':
             h = predictions[0].view(-1, 4)
             z = h[:,0:2]
             loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
@@ -351,7 +356,7 @@ def test(epoch, model, loader, is_cuda, is_vis):
         model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
         if model.mode == 'R' or model.mode == 'RARC' or model.mode == 'RC': 
             output = output[0]
-        if model.mode == 'BKF' or model.mode == 'LSTMBKF':
+        if model.mode == 'BKF' or model.mode == 'LSTMBKFE2E' or model.mode == 'LSTMBKF':
             output = output[:,:,0:2].contiguous()
         pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
         if is_vis: visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
@@ -382,7 +387,7 @@ def train_all(args):
         epoch = args.load_model + 1
     else:
         epoch = 1
-    mode_lengths = [('FF', 5), ('RC', 5), ('RARC', 40), ('R', 30), ('BKF',20), ('LSTMBKF', 40)]
+    mode_lengths = [('FF', 5), ('RC', 5), ('RARC', 40), ('R', 30), ('BKF',20), ('LSTMBKF', 40), ('LSTMBKFE2E',40)]
     #mode_lengths = [('LSTMBKF', 120)]
     modes = []
     total=0
