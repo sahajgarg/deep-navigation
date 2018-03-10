@@ -27,14 +27,19 @@ class KFNet(nn.Module):
     """
     def __init__(self, batch_size, dynamics_path):
         super(KFNet, self).__init__()
+        self.hidden_size = 5
         self.build_conv()
-        self.build_KF()
+        self.build_LSTM()
         self.mode = None
-        self.RC = nn.Parameter(torch.eye(2).float().cuda(), requires_grad=True)
         self.batch_size = batch_size
         self.set_grads_for_mode()
         self.fclr = nn.Linear(128*128*3, 2)
-
+        for name, param in self.named_parameters():
+            if "bias" not in name and "batchnorm" not in name: 
+                torch.nn.init.xavier_uniform(param)
+            elif "bias" in name:
+                param.data.zero_()
+        self.RC = nn.Parameter(50.0*torch.eye(2).float().cuda(), requires_grad=True)
         with open(dynamics_path, 'rb') as dyn_file:
             dynamics = pickle.load(dyn_file)
             self.A = Variable(torch.Tensor(dynamics['A']).cuda())
@@ -43,6 +48,7 @@ class KFNet(nn.Module):
             self.BT = Variable(torch.Tensor(dynamics['B'].T).cuda())
             self.C = Variable(torch.Tensor(dynamics['C']).cuda())
             self.CT = Variable(torch.Tensor(dynamics['C'].T).cuda())
+            self.Q = Variable(torch.Tensor(dynamics['Q']).cuda())
 
     # Does using this as a self mean that each norm layer will be identical//is that an issue
     def resp_norm(self, input):
@@ -65,6 +71,7 @@ class KFNet(nn.Module):
             self.fc3_L.weight.requires_grad = False
             self.fc3_L.bias.requires_grad = False
             self.RC.requires_grad = False
+            # LSTM parameters are not being tuned for any model except the LSTM, by default
 
         if self.mode == 'RC':
             for param in self.parameters():
@@ -83,14 +90,25 @@ class KFNet(nn.Module):
                 param.requires_grad = True
             self.RC.requires_grad = False
         
-        if self.mode == 'BFK':
+        if self.mode == 'BKF':
             for param in self.parameters():
                 param.requires_grad = True
             self.RC.requires_grad = False
 
-        if self.mode == 'LSTMBFK':
-            for param in self.parameters():
-                param.requires_grad = True
+        if self.mode == 'LSTMBKF':
+            for name, param in self.named_parameters():
+                if 'LSTM' not in name:
+                    param.requires_grad = False
+                elif 'bias' not in name:
+                    num_blocks = int(param.shape[0] / 5)
+                    block_size = int(param.shape[0] / num_blocks)
+                    tmp_xav = torch.Tensor(param.shape).float().cuda()
+                    torch.nn.init.xavier_normal(tmp_xav)
+                    tmp2 = torch.eye(block_size).float().cuda()
+                    for i in range(num_blocks):
+                        tmp_xav[i*block_size : (i+1)*block_size,:] += tmp2
+                    param.data = tmp_xav
+                else: continue
             self.RC.requires_grad = False
 
 
@@ -106,17 +124,14 @@ class KFNet(nn.Module):
         self.fc3_z = nn.Linear(32, 2)
         self.fc3_L = nn.Linear(32, 3)
 
-    def build_KF(self):
-        self.Q = nn.Parameter(torch.randn(4, 4).float().cuda(), requires_grad=True)
- 
-	def build_LSTM(self):
-		self.LSTM = nn.LSTM(self.seq_len, self.hidden_size, batch_first=True)
+    def build_LSTM(self):
+        self.LSTM = nn.LSTM(self.hidden_size, self.hidden_size, batch_first=True)
 	
 	##input is z and R flattened
     ## MB_size x timesteps x 2
-	def run_LSTM(self, input_flat):
-        out, hidden = lstm(inputs_flat)
-		return out
+    def run_LSTM(self, input_flat):
+        out, hidden = self.LSTM(input_flat)
+        return out
        
     def run_KF(self, z, R):
         outputs = []
@@ -129,23 +144,12 @@ class KFNet(nn.Module):
         sprime = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
 
         K_t = Variable(torch.zeros(z.size(0), 4, 2).float().cuda(), requires_grad=False)
-        #print(K_t)
-
         I = Variable(torch.eye(4).float().cuda())
 
         # Initialize mean and covariance for time step 0
         h[:,0:2,:] = z[:,0,:]
         s[:,0:2,0:2] = R[:,0,:,:]
         s[:,2:4,2:4] = torch.stack([Variable(torch.eye(2).cuda(), requires_grad=False) for i in range(z.size(0))]) 
-        #print(s[:,0,:,:])
-        #print(self.C)
-        
-        #A = Variable(torch.Tensor(self.A).cuda())
-        #AT = Variable(torch.Tensor(self.AT).cuda())
-        #B = Variable(torch.Tensor(self.B).cuda())
-        #BT = Variable(torch.Tensor(self.BT).cuda())
-        #C = Variable(torch.Tensor(self.C[0:2]).cuda())
-        #CT = Variable(torch.Tensor(self.CT[:,0:2]).cuda())
         outputs += [h.squeeze(2)]
 
         # for each frame in sequence:
@@ -165,7 +169,6 @@ class KFNet(nn.Module):
         
         outputs = torch.stack(outputs, 1)
         return outputs 
-
 
     def forward(self, x):
         if self.mode == 'LR':
@@ -203,18 +206,21 @@ class KFNet(nn.Module):
         if self.mode == 'BKF':
             return self.run_KF(z, R)
 		
-		if self.mode == 'LSTMBKF':
-			inp = torch.concat([z,L],2)
-			outp = self.run_LSTM(inp)
-			z_new = outp[:,:,0:2]
-			L_new = outp[:,:,2::]
-        	L_m = Variable(torch.FloatTensor(L_new.shape[0], 2, 2).zero_()).cuda()
-        	L_m[:,0,0] = L[:,0]
-        	L_m[:,1,0] = L[:,1]
-        	L_m[:,1,1] = L[:,2]
-        	R_new = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
-        	R_new = R_new.view(self.batch_size, -1, 2, 2)
-			return self.run_KF(z_new, R_new)
+        if self.mode == 'LSTMBKF':
+            L = L.view(1, L.shape[0], L.shape[1])
+            inp = torch.cat([z,L],2)
+            outp = self.run_LSTM(inp)
+            print(outp)
+            z_new = outp[:,:,0:2]
+            L_new = outp[:,:,2::]
+            L_new = L_new.squeeze()
+            L_m = Variable(torch.FloatTensor(L_new.shape[0], 2, 2).zero_()).cuda()
+            L_m[:,0,0] = L_new[:,0]
+            L_m[:,1,0] = L_new[:,1]
+            L_m[:,1,1] = L_new[:,2]
+            R_new = torch.bmm(L_m, torch.transpose(L_m, 1, 2))
+            R_new = R_new.view(self.batch_size, -1, 2, 2)
+            return self.run_KF(z_new, R_new)
 
 
 
@@ -298,7 +304,7 @@ def change_mode(model, mode):
     print("Optimizing: ", [name for (name, param) in model.named_parameters() if param.requires_grad])
     params = [param for param in model.parameters() if param.requires_grad]
     ## PREVIOUSLY: RARC was 0.01 --> sort of unstable
-    lrs = {'FF': 0.001, 'RC': 0.1, 'RARC': 0.004, 'R': 0.0001}
+    lrs = {'FF': 0.001, 'RC': 0.01, 'RARC': 0.004, 'R': 0.0001}
     lr = lrs[mode] if mode in lrs else 0.001
     optimizer = optim.Adam(params, lr=lr)
 
@@ -345,7 +351,7 @@ def test(epoch, model, loader, is_cuda, is_vis):
         model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
         if model.mode == 'R' or model.mode == 'RARC' or model.mode == 'RC': 
             output = output[0]
-        if model.mode == 'BKF':
+        if model.mode == 'BKF' or model.mode == 'LSTMBKF':
             output = output[:,:,0:2].contiguous()
         pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
         if is_vis: visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
@@ -372,13 +378,12 @@ def train_all(args):
     model, train_loader, val_loader = init_model(args, args.cuda, args.batch_size)
 
     if args.load_model: 
-        model = torch.load(args.load_dir + "{}".format(args.load_model))
+        model = torch.load(args.load_dir + "/{}".format(args.load_model))
         epoch = args.load_model + 1
     else:
         epoch = 1
-    
-    #mode_lengths = [('FF', 10), ('RC', 20), ('RARC', 40), ('R', 30), ('BKF', 40)]
-    mode_lengths = [('LSTMBKF', 60)]
+    mode_lengths = [('FF', 5), ('RC', 5), ('RARC', 40), ('R', 30), ('BKF',20), ('LSTMBKF', 40)]
+    #mode_lengths = [('LSTMBKF', 120)]
     modes = []
     total=0
     for mode in mode_lengths:
@@ -390,7 +395,10 @@ def train_all(args):
         optimizer = change_mode(model, mode[0])
         while epoch <= mode[1]:
             train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
-            test(epoch, model, val_loader, args.cuda, args.visualize)
+            print_val = True
+            if print_val:
+                print("Numbers on val set")
+                test(epoch, model, val_loader, args.cuda, args.visualize)
             print_train = True
             if print_train:
                 print("Numbers on training set")

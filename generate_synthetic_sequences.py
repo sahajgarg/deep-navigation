@@ -160,9 +160,9 @@ def main():
   print(runtime_config)
   print(arg_dict)
   A = generate_expA(runtime_config)
-  B = np.zeros((4,4))
-  B[3,3] = math.sqrt(SIG2)
-  B[2,2] = math.sqrt(SIG2)
+  B = np.zeros((4,2))
+  B[2,0] = 1.0
+  B[3,1] = 1.0
   C = np.zeros((2,4))
   C[0,0] = 1.0
   C[1,1] = 1.0
@@ -170,6 +170,8 @@ def main():
   d['A'] = A
   d['B'] = B
   d['C'] = C
+  Q = np.eye(2) * SIG2
+  d['Q'] = Q
   with open('./train/dynamics.pkl', 'wb') as f:
       pickle.dump(d, f)
   return
