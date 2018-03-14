@@ -15,16 +15,15 @@ from tqdm import tqdm
 IMAGE_SIZE = (128, 128)
 
 class KFNet(nn.Module):
-
     """
         Allowable modes include:
-            'feed_forward (FF)'
-            'r_const (RC) '
-            'r_against_r_const (RARC)'
-            'R_t (R)'
-            'backprop_kf (BKF)'
-            'LSTM w/backprop KF (LSTMBKF)'
-            'LSTMBKFE2E'
+            'feed_forward: (FF)'
+            'r_const: (RC) '
+            'r_against_r_const: (RARC)'
+            'R_t: (R)'
+            'backprop_kf: (BKF)'
+            'LSTM w/backprop KF, training only LSTM: (LSTMBKF)'
+            'LSTM end to end, training all params: (LSTMBKFE2E)'
     """
     def __init__(self, batch_size, dynamics_path):
         super(KFNet, self).__init__()
@@ -105,9 +104,6 @@ class KFNet(nn.Module):
                     block_size = int(param.shape[0] / num_blocks)
                     tmp_xav = torch.Tensor(param.shape).float().cuda()
                     torch.nn.init.xavier_normal(tmp_xav)
-                    #tmp2 = torch.eye(block_size).float().cuda()
-                    #for i in range(num_blocks):
-                    #    tmp_xav[i*block_size : (i+1)*block_size,:] += tmp2
                     param.data = tmp_xav
                 else: continue
             self.RC.requires_grad = False
@@ -215,7 +211,7 @@ class KFNet(nn.Module):
             L = L.view(1, L.shape[0], L.shape[1])
             inp = torch.cat([z,L],2)
             outp = self.run_LSTM(inp)
-            outp = 64*outp
+            outp = 100*outp
             z_new = outp[:,:,0:2]
             L_new = outp[:,:,2::]
             L_new = L_new.squeeze()
@@ -227,20 +223,16 @@ class KFNet(nn.Module):
             R_new = R_new.view(self.batch_size, -1, 2, 2)
             return self.run_KF(z_new, R_new)
 
-
-
     def loss(self, predictions, labels, epoch):
         # MSE prediction loss on feed foward model
         if self.mode == 'FF' or self.mode == 'LR':
             loss = F.mse_loss(predictions.view(-1, 2), labels.contiguous().view(-1, 2))
-            #print(loss)
-        
+
         # Log Likelihood assuming constant R
         elif self.mode == 'RC':
             z = predictions.view(-1, 2)
             labels = labels.contiguous().view(-1, 2)
             RC_inv = self.RC.inverse()
-            #print(self.RC)
             error = z - labels
             error = error.view(error.shape[0], error.shape[1], 1)
             nll_det = 1.0/2.0*torch.log(self.RC[0,0]*self.RC[1,1]-self.RC[0,1]*self.RC[1,0])
@@ -251,71 +243,65 @@ class KFNet(nn.Module):
         elif self.mode == 'RARC':
             R = predictions[1].view(-1,2,2)
             diff = R - self.RC
-            # MSE; see if you want RMSE
             return torch.mean((diff**2).sum()) + 3*F.mse_loss(predictions[0].view(-1, 2), labels.contiguous().view(-1, 2))
-
         
         # Log likelihood assuming variable R_t
         elif self.mode == 'R':
             z = predictions[0].view(-1, 2)
             R = predictions[1].view(-1, 2, 2)
             labels = labels.contiguous().view(-1, 2)
-            factor = max(0.0,(1.0 - (epoch - 20)/6.0))
-
-            R_adj = [((1-factor)*t + factor*Variable(torch.eye(2).float(),requires_grad=False).cuda()) for t in torch.functional.unbind(R)]
-            R_adj = torch.functional.stack(R_adj)
-            R_inv = binv(R_adj)
-            error = z - labels
+            R_inv = binv(R)
             error = (z - labels).unsqueeze(2)
-            nll_det = 1.0/2.0*torch.log(R_adj[:,0,0]*R_adj[:,1,1]-R_adj[:,0,1]*R_adj[:,1,0])
+            nll_det = 1.0/2.0*torch.log(R[:,0,0]*R[:,1,1]-R[:,0,1]*R[:,1,0])
             nll = torch.bmm(torch.transpose(error,2,1), torch.bmm(R_inv, error)) + nll_det
             loss = torch.mean(nll) 
-            if(torch.abs(loss).data[0] > 1000):
-                print("big error")
 
         elif self.mode == 'BKF':
             h = predictions[0].view(-1, 4)
             z = h[:,0:2]
-            #print(z.shape)
-            #print(z-labels.contiguous().view(-1,2))
             loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
 
+        # Train LSTMBKF with just LSTM or end to end
         elif self.mode == 'LSTMBKF' or self.mode == 'LSTMBKFE2E':
             h = predictions[0].view(-1, 4)
             z = h[:,0:2]
             loss = F.mse_loss(z, labels.contiguous().view(-1, 2))
+
         return loss
 
-
+# Inversion of a batch of tensors x
 def binv(x):
     inv = [t.inverse() for t in torch.functional.unbind(x)]
     return torch.functional.stack(inv)
 
-def init_model(args, is_cuda, batch_size):
+# Build and intialize model, dataloaders
+def init_model(args, is_cuda, batch_size, test_batch_size):
     model = KFNet(args.batch_size, "./train/dynamics.pkl")
     if is_cuda:
         model.cuda()
 
-    kwargs = {'num_workers': 1, 'pin_memory': True} if is_cuda else {}
+    # 0 workers is about 20% faster than 1 and 10x faster than 4
+    kwargs = {'num_workers': 0, 'pin_memory': True} if is_cuda else {}
     train_dataset = RedDotDataset(base_dir='./train/redDot/')
     val_dataset = RedDotDataset(base_dir='./val/redDot/')
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs) ## Maybe: num_workers=4
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, **kwargs) ## Maybe: num_workers=4
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
+    val_loader = DataLoader(val_dataset, batch_size=test_batch_size, shuffle=False, **kwargs) 
 
     return model, train_loader, val_loader
 
+# Change mode and return new optimizer
 def change_mode(model, mode):
     model.change_mode(mode)
     print("Optimizing: ", [name for (name, param) in model.named_parameters() if param.requires_grad])
     params = [param for param in model.parameters() if param.requires_grad]
-    ## PREVIOUSLY: RARC was 0.01 --> sort of unstable
     lrs = {'FF': 0.001, 'RC': 0.01, 'RARC': 0.004, 'R': 0.0001}
     lr = lrs[mode] if mode in lrs else 0.001
     optimizer = optim.Adam(params, lr=lr)
 
     return optimizer    
 
-def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_model):
+# Perform a single epoch of training
+def train(model, optimizer, train_loader, epoch, is_cuda, save_model):
     model.train()
     for batch_idx, sampled_batch in enumerate(tqdm(train_loader)):
         image_data = sampled_batch['images']
@@ -323,25 +309,21 @@ def train(model, optimizer, train_loader, epoch, is_cuda, log_interval, save_mod
 
         if is_cuda:
             image_data, gt_poses = image_data.cuda(), gt_poses.cuda()
+        image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) 
 
-        image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
         optimizer.zero_grad()
         output = model(image_data)
-
         loss = model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch)
         loss.backward()
         optimizer.step()
-
-        #if batch_idx % log_interval == 0:
-        #    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-        #        epoch, batch_idx * image_data.shape[0], len(train_loader.dataset),
-        #        100. * batch_idx / len(train_loader), loss.data[0]))
     
     if save_model and epoch % 2 == 0:
         torch.save(model, "epoch/" + str(epoch))
 
+# Perform an evaluation after epoch on the loader
 def test(epoch, model, loader, is_cuda, is_vis):
     model.eval()
+    print_pixel_loss=False #Set to true to view how pixel prediction loss changes when it's not equal to the model loss
     pixel_loss = []
     model_loss = []
     for batch_idx, sampled_batch in enumerate(loader):
@@ -351,44 +333,56 @@ def test(epoch, model, loader, is_cuda, is_vis):
         if is_cuda:
             image_data, gt_poses = image_data.cuda(), gt_poses.cuda()
 
-        image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float()) ### TODO: figure out why this exits
+        image_data, gt_poses = Variable(image_data.float()), Variable(gt_poses.float())
         output = model(image_data)
         model_loss.append(model.loss(output, torch.transpose(gt_poses[:,0:2,:], 2, 1), epoch).data[0])
-        if model.mode == 'R' or model.mode == 'RARC' or model.mode == 'RC': 
-            output = output[0]
-        if model.mode == 'BKF' or model.mode == 'LSTMBKFE2E' or model.mode == 'LSTMBKF':
-            output = output[:,:,0:2].contiguous()
-        pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
-        if is_vis: visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
-    print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
+
+        if print_pixel_loss:
+            if model.mode == 'R' or model.mode == 'RARC' or model.mode == 'RC': 
+                output = output[0]
+            if model.mode == 'BKF' or model.mode == 'LSTMBKFE2E' or model.mode == 'LSTMBKF':
+                output = output[:,:,0:2].contiguous()
+            pixel_loss.append(F.mse_loss(output.view(-1, 2), torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1, 2)).data[0])
+
+        if is_vis: 
+            visualize_result(torch.transpose(gt_poses[:,0:2,:],2,1).contiguous().view(-1,2), output.view(-1,2), str(epoch) + "_" + str(batch_idx))
+    
+    if print_pixel_loss:
+        print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
+
     print('Test Epoch: {} \tModel Loss: {:.6f}'.format(epoch, np.mean(model_loss)))
 
+# Util for initializing image for visualization
 def init_image():
     img = np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[0], 3))
     img.fill(255)
     return img
 
+# Util for writing trajectory on image
 def write_traj_on_image(img, traj, color):
     N = traj.shape[0]
     for i in range(N-1):
         cv2.line(img, (traj[i,0]+64, traj[i,1]+64), (traj[i+1,0]+64, traj[i+1,1]+64), color)
     
+
+# Visualize the result
 def visualize_result(gt_traj, est_traj, idx):
     img = init_image()
     write_traj_on_image(img, gt_traj, (0,255,0))
     write_traj_on_image(img, est_traj, (0,0,0))
     cv2.imwrite("results/" + str(idx) + ".png", img)
 
+# Defines the sequence of modes and their lengths in epochs for training
 def train_all(args):
-    model, train_loader, val_loader = init_model(args, args.cuda, args.batch_size)
+    model, train_loader, val_loader = init_model(args, args.cuda, args.batch_size, args.test_batch_size)
 
     if args.load_model: 
         model = torch.load(args.load_dir + "/{}".format(args.load_model))
         epoch = args.load_model + 1
     else:
         epoch = 1
+
     mode_lengths = [('FF', 5), ('RC', 5), ('RARC', 40), ('R', 30), ('BKF',20), ('LSTMBKF', 40), ('LSTMBKFE2E',40)]
-    #mode_lengths = [('LSTMBKF', 120)]
     modes = []
     total=0
     for mode in mode_lengths:
@@ -399,12 +393,12 @@ def train_all(args):
         print(mode[0])
         optimizer = change_mode(model, mode[0])
         while epoch <= mode[1]:
-            train(model, optimizer, train_loader, epoch, args.cuda, args.log_interval, args.save_model)
+            train(model, optimizer, train_loader, epoch, args.cuda, args.save_model)
             print_val = True
             if print_val:
                 print("Numbers on val set")
                 test(epoch, model, val_loader, args.cuda, args.visualize)
-            print_train = True
+            print_train = False 
             if print_train:
                 print("Numbers on training set")
                 test(epoch, model, train_loader, args.cuda, args.visualize)
@@ -424,13 +418,10 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=100, metavar='N',
-                        help='how many batches to wait before logging training status')
     parser.add_argument('--load-model', type=int, help='load model from epoch #(int)')
     parser.add_argument('--load-dir', type=str, default="./epoch", help='directory to load model (default ./epoch)')
     parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
     parser.add_argument('--visualize', action='store_true', default=False, help='visualize model (default False)')
-    parser.add_argument('--model-type', type=str, default='FF', help='model type')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     torch.manual_seed(args.seed)
