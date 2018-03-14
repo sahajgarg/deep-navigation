@@ -26,7 +26,6 @@ class KITTIDataset(Dataset):
         print("initialized")
 
     def __len__(self):
-        #print(len(self.frame_selections[0]))
         return len(self.frame_selections[0])
 
     def __getitem__(self, idx):
@@ -65,26 +64,14 @@ class RedDotDataset(Dataset):
             base_dir (string): Directory with all npy files for the images and the gt
         """
         self.base_dir = base_dir
-        #l = int(len([name for name in os.listdir(self.base_dir) if os.path.isfile(self.base_dir + name)])/2)
-        #self.images = []
-        #self.gt = []
-        #for idx in range(l):
-        #    self.images.append(np.load(self.base_dir + "/{}_img.npy".format(idx), encoding='latin1'))
-        #    self.gt.append(np.load(self.base_dir + "/{}_pos.npy".format(idx), encoding='latin1'))
-
-        print("initialized")
 
     def __len__(self):
         l = int(len([name for name in os.listdir(self.base_dir) if os.path.isfile(self.base_dir + name)])/2)
-        #print(l)
         return l
 
     def __getitem__(self, idx):
-        #print("getting item")
         images = np.load(self.base_dir + "/{}_img.npy".format(idx), encoding='latin1')
         gt = np.load(self.base_dir + "/{}_pos.npy".format(idx), encoding='latin1')
         sample = {'images': images, 'gt': gt}
-        #sample = {'images': self.images[idx], 'gt': self.gt[idx]}
-        #print(sample['images'].shape, sample['gt'].shape)
         return sample
 
