@@ -172,14 +172,14 @@ def main():
   d['C'] = C
   Q = np.eye(2) * SIG2
   d['Q'] = Q
-  with open('./train/dynamics.pkl', 'wb') as f:
-      pickle.dump(d, f)
-  return
 
   if not os.path.exists(runtime_config.dir + "/redDot"):
     os.makedirs(runtime_config.dir + "/redDot")
   if not os.path.exists(runtime_config.dir + "/orig_traj"):
     os.makedirs(runtime_config.dir + "/orig_traj")
+  with open('./train/dynamics.pkl', 'wb') as f:
+      pickle.dump(d, f)
+  #return
 
   if not os.path.exists(runtime_config.dir + "/imgs"): 
     os.makedirs(runtime_config.dir + "/imgs")

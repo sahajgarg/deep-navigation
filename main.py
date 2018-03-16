@@ -140,7 +140,7 @@ class KFNet(nn.Module):
         h = Variable(torch.zeros(z.size(0), 4, 1).float().cuda(), requires_grad=False)
         hprime = Variable(torch.zeros(z.size(0), 4, 1).float().cuda(), requires_grad=False)
 
-   	# s is covariance matrix
+   	    # s is covariance matrix
         s = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
         sprime = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
 
@@ -301,7 +301,7 @@ def change_mode(model, mode):
     return optimizer    
 
 # Perform a single epoch of training
-def train(model, optimizer, train_loader, epoch, is_cuda, save_model):
+def train(model, optimizer, train_loader, epoch, is_cuda, logdir):
     model.train()
     for batch_idx, sampled_batch in enumerate(tqdm(train_loader)):
         image_data = sampled_batch['images']
@@ -317,13 +317,13 @@ def train(model, optimizer, train_loader, epoch, is_cuda, save_model):
         loss.backward()
         optimizer.step()
     
-    if save_model and epoch % 2 == 0:
-        torch.save(model, "epoch/" + str(epoch))
+    if logdir and epoch % 2 == 0:
+        torch.save(model, logdir + "/" + str(epoch))
 
 # Perform an evaluation after epoch on the loader
 def test(epoch, model, loader, is_cuda, is_vis):
     model.eval()
-    print_pixel_loss=False #Set to true to view how pixel prediction loss changes when it's not equal to the model loss
+    print_pixel_loss=True #Set to true to view how pixel prediction loss changes when it's not equal to the model loss
     pixel_loss = []
     model_loss = []
     for batch_idx, sampled_batch in enumerate(loader):
@@ -351,6 +351,7 @@ def test(epoch, model, loader, is_cuda, is_vis):
         print('Test Epoch: {} \tPixel Loss: {:.6f}'.format(epoch, np.mean(pixel_loss)))
 
     print('Test Epoch: {} \tModel Loss: {:.6f}'.format(epoch, np.mean(model_loss)))
+    return np.mean(pixel_loss), np.mean(model_loss)
 
 # Util for initializing image for visualization
 def init_image():
@@ -379,8 +380,14 @@ def train_all(args):
     if args.load_model: 
         model = torch.load(args.load_dir + "/{}".format(args.load_model))
         epoch = args.load_model + 1
+        log = pickle.load(open(args.load_dir + "/log.pkl", "rb"))
+        log["train"]["pixel_loss"] = log["pixel_loss"][0:epoch]
+        log["train"]["model_loss"] = log["pixel_loss"][0:epoch]
+        log["val"]["pixel_loss"] = log["pixel_loss"][0:epoch]
+        log["val"]["model_loss"] = log["pixel_loss"][0:epoch]
     else:
         epoch = 1
+        log = {"modes": modes, "train": {"pixel_loss":[], "model_loss":[]}, "val": {"pixel_loss":[], "model_loss":[]}}
 
     mode_lengths = [('FF', 5), ('RC', 5), ('RARC', 40), ('R', 30), ('BKF',20), ('LSTMBKF', 40), ('LSTMBKFE2E',40)]
     modes = []
@@ -388,20 +395,29 @@ def train_all(args):
     for mode in mode_lengths:
         total += mode[1]
         modes.append((mode[0], total))
-    
+
+    log["modes"] = modes    
+
     for mode in modes:
         print(mode[0])
         optimizer = change_mode(model, mode[0])
         while epoch <= mode[1]:
-            train(model, optimizer, train_loader, epoch, args.cuda, args.save_model)
+            train(model, optimizer, train_loader, epoch, args.cuda, args.logdir)
+            
             print_val = True
             if print_val:
                 print("Numbers on val set")
-                test(epoch, model, val_loader, args.cuda, args.visualize)
-            print_train = False 
+                pixel_loss, val_loss = test(epoch, model, val_loader, args.cuda, args.visualize)
+                log["val"]["pixel_loss"].append(pixel_loss)
+                log["val"]["model_loss"].append(model_loss)
+            print_train = True 
             if print_train:
                 print("Numbers on training set")
-                test(epoch, model, train_loader, args.cuda, args.visualize)
+                pixel_loss, val_loss = test(epoch, model, train_loader, args.cuda, args.visualize)
+                log["train"]["pixel_loss"].append(pixel_loss)
+                log["train"]["model_loss"].append(model_loss)
+
+            pkl.dump(log, open(args.logdir + "/log.pkl", "wb"))
             epoch += 1
 
 
@@ -420,16 +436,22 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--load-model', type=int, help='load model from epoch #(int)')
     parser.add_argument('--load-dir', type=str, default="./epoch", help='directory to load model (default ./epoch)')
-    parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False)')
+    parser.add_argument('--logdir', type=str, default="", help='directory to save model (default ./epoch)')    
+    parser.add_argument('--save-model', action='store_true', default=False, help='save model (default False). Saving model can also be specified by providing a logdir. ')
     parser.add_argument('--visualize', action='store_true', default=False, help='visualize model (default False)')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
+    if args.save_model and not args.logdir: 
+        args.logdir="./epoch"
+
     torch.manual_seed(args.seed)
     if args.cuda:
         torch.cuda.manual_seed(args.seed)
 
     if not os.path.exists("results"): 
         os.makedirs("results")
+    if not os.path.exists("epoch"): 
+        os.makedirs("epoch")
 
     train_all(args)
 
