@@ -1,4 +1,5 @@
 dataset
+logdir
 KITTI_dataset/
 results/
 redDot/

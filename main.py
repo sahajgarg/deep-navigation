@@ -25,8 +25,9 @@ class KFNet(nn.Module):
             'LSTM w/backprop KF, training only LSTM: (LSTMBKF)'
             'LSTM end to end, training all params: (LSTMBKFE2E)'
     """
-    def __init__(self, batch_size, dynamics_path):
+    def __init__(self, batch_size, dynamics_path, is_cuda):
         super(KFNet, self).__init__()
+        self.dtype = torch.cuda.FloatTensor if is_cuda else torch.FloatTensor
         self.hidden_size = 5
         self.build_conv()
         self.build_LSTM()
@@ -39,16 +40,16 @@ class KFNet(nn.Module):
                 torch.nn.init.xavier_uniform(param)
             elif "bias" in name:
                 param.data.zero_()
-        self.RC = nn.Parameter(50.0*torch.eye(2).float().cuda(), requires_grad=True)
+        self.RC = nn.Parameter(50.0*torch.eye(2).type(self.dtype), requires_grad=True)
         with open(dynamics_path, 'rb') as dyn_file:
             dynamics = pickle.load(dyn_file)
-            self.A = Variable(torch.Tensor(dynamics['A']).cuda())
-            self.AT = Variable(torch.Tensor(dynamics['A'].T).cuda())
-            self.B = Variable(torch.Tensor(dynamics['B']).cuda())
-            self.BT = Variable(torch.Tensor(dynamics['B'].T).cuda())
-            self.C = Variable(torch.Tensor(dynamics['C']).cuda())
-            self.CT = Variable(torch.Tensor(dynamics['C'].T).cuda())
-            self.Q = Variable(torch.Tensor(dynamics['Q']).cuda())
+            self.A = Variable(torch.Tensor(dynamics['A']).type(self.dtype))
+            self.AT = Variable(torch.Tensor(dynamics['A'].T).type(self.dtype))
+            self.B = Variable(torch.Tensor(dynamics['B']).type(self.dtype))
+            self.BT = Variable(torch.Tensor(dynamics['B'].T).type(self.dtype))
+            self.C = Variable(torch.Tensor(dynamics['C']).type(self.dtype))
+            self.CT = Variable(torch.Tensor(dynamics['C'].T).type(self.dtype))
+            self.Q = Variable(torch.Tensor(dynamics['Q']).type(self.dtype))
 
     # Does using this as a self mean that each norm layer will be identical//is that an issue
     def resp_norm(self, input):
@@ -102,7 +103,7 @@ class KFNet(nn.Module):
                 elif 'bias' not in name:
                     num_blocks = int(param.shape[0] / 5)
                     block_size = int(param.shape[0] / num_blocks)
-                    tmp_xav = torch.Tensor(param.shape).float().cuda()
+                    tmp_xav = torch.Tensor(param.shape).type(self.dtype)
                     torch.nn.init.xavier_normal(tmp_xav)
                     param.data = tmp_xav
                 else: continue
@@ -137,20 +138,20 @@ class KFNet(nn.Module):
     def run_KF(self, z, R):
         outputs = []
         
-        h = Variable(torch.zeros(z.size(0), 4, 1).float().cuda(), requires_grad=False)
-        hprime = Variable(torch.zeros(z.size(0), 4, 1).float().cuda(), requires_grad=False)
+        h = Variable(torch.zeros(z.size(0), 4, 1).type(self.dtype), requires_grad=False)
+        hprime = Variable(torch.zeros(z.size(0), 4, 1).type(self.dtype), requires_grad=False)
 
    	    # s is covariance matrix
-        s = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
-        sprime = Variable(torch.zeros(z.size(0), 4, 4).float().cuda(), requires_grad=False)
+        s = Variable(torch.zeros(z.size(0), 4, 4).type(self.dtype), requires_grad=False)
+        sprime = Variable(torch.zeros(z.size(0), 4, 4).type(self.dtype), requires_grad=False)
 
-        K_t = Variable(torch.zeros(z.size(0), 4, 2).float().cuda(), requires_grad=False)
-        I = Variable(torch.eye(4).float().cuda())
+        K_t = Variable(torch.zeros(z.size(0), 4, 2).type(self.dtype), requires_grad=False)
+        I = Variable(torch.eye(4).type(self.dtype))
 
         # Initialize mean and covariance for time step 0
         h[:,0:2,:] = z[:,0,:]
         s[:,0:2,0:2] = R[:,0,:,:]
-        s[:,2:4,2:4] = torch.stack([Variable(torch.eye(2).cuda(), requires_grad=False) for i in range(z.size(0))]) 
+        s[:,2:4,2:4] = torch.stack([Variable(torch.eye(2).type(self.dtype), requires_grad=False) for i in range(z.size(0))]) 
         outputs += [h.squeeze(2)]
 
         # for each frame in sequence:
@@ -194,7 +195,7 @@ class KFNet(nn.Module):
             return z
 
         L = self.fc3_L(x)
-        L_m = Variable(torch.FloatTensor(L.shape[0], 2, 2).zero_()).cuda()
+        L_m = Variable(torch.zeros(L.shape[0], 2, 2).type(self.dtype))
         L_m[:,0,0] = L[:,0]
         L_m[:,1,0] = L[:,1]
         L_m[:,1,1] = L[:,2]
@@ -215,7 +216,7 @@ class KFNet(nn.Module):
             z_new = outp[:,:,0:2]
             L_new = outp[:,:,2::]
             L_new = L_new.squeeze()
-            L_m = Variable(torch.FloatTensor(L_new.shape[0], 2, 2).zero_()).cuda()
+            L_m = Variable(torch.zeros(L_new.shape[0], 2, 2).type(self.dtype))
             L_m[:,0,0] = L_new[:,0]
             L_m[:,1,0] = L_new[:,1]
             L_m[:,1,1] = L_new[:,2]
@@ -276,7 +277,7 @@ def binv(x):
 
 # Build and intialize model, dataloaders
 def init_model(args, is_cuda, batch_size, test_batch_size):
-    model = KFNet(args.batch_size, "./train/dynamics.pkl")
+    model = KFNet(args.batch_size, "./train/dynamics.pkl", is_cuda)
     if is_cuda:
         model.cuda()
 
@@ -387,7 +388,7 @@ def train_all(args):
         log["val"]["model_loss"] = log["pixel_loss"][0:epoch]
     else:
         epoch = 1
-        log = {"modes": modes, "train": {"pixel_loss":[], "model_loss":[]}, "val": {"pixel_loss":[], "model_loss":[]}}
+        log = {"train": {"pixel_loss":[], "model_loss":[]}, "val": {"pixel_loss":[], "model_loss":[]}}
 
     mode_lengths = [('FF', 5), ('RC', 5), ('RARC', 40), ('R', 30), ('BKF',20), ('LSTMBKF', 40), ('LSTMBKFE2E',40)]
     modes = []
@@ -407,17 +408,17 @@ def train_all(args):
             print_val = True
             if print_val:
                 print("Numbers on val set")
-                pixel_loss, val_loss = test(epoch, model, val_loader, args.cuda, args.visualize)
+                pixel_loss, model_loss = test(epoch, model, val_loader, args.cuda, args.visualize)
                 log["val"]["pixel_loss"].append(pixel_loss)
                 log["val"]["model_loss"].append(model_loss)
             print_train = True 
             if print_train:
                 print("Numbers on training set")
-                pixel_loss, val_loss = test(epoch, model, train_loader, args.cuda, args.visualize)
+                pixel_loss, model_loss = test(epoch, model, train_loader, args.cuda, args.visualize)
                 log["train"]["pixel_loss"].append(pixel_loss)
                 log["train"]["model_loss"].append(model_loss)
 
-            pkl.dump(log, open(args.logdir + "/log.pkl", "wb"))
+            pickle.dump(log, open(args.logdir + "/log.pkl", "wb"))
             epoch += 1
 
 
@@ -450,8 +451,8 @@ def main():
 
     if not os.path.exists("results"): 
         os.makedirs("results")
-    if not os.path.exists("epoch"): 
-        os.makedirs("epoch")
+    if not os.path.exists(args.logdir): 
+        os.makedirs(args.logdir)
 
     train_all(args)
 
